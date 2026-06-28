@@ -28,7 +28,7 @@ Installation
 ```bash
 # Clone the repository
 git clone https://github.com/erfan1994/termux-backup
-cd termux-vault 
+cd termux-backup
 
 # Make scripts executable
 chmod +x termux-backup termux-restore
