@@ -1,5 +1,5 @@
 ```markdown
-# 📦 Termux Vault - Production-Grade Backup & Restore System
+# 📦 Termux Backup - Production-Grade Backup & Restore System
 
 A **zero-dependency, self-contained** backup and disaster recovery system for Termux that ensures your entire Android Linux environment is safe, verifiable, and instantly recoverable.
 
@@ -10,7 +10,7 @@ A **zero-dependency, self-contained** backup and disaster recovery system for Te
 
 ---
 
-## 🎯 Why Termux Vault?
+## 🎯 Why Termux Termux-backup?
 
 Termux environments are fragile. One bad `apt upgrade`, a filesystem corruption, or accidental `rm -rf` can destroy months of configuration. **Termux Vault** provides:
 
