@@ -1,37 +1,63 @@
-📦 Termux Vault - Production-Grade Backup & Restore System
+```markdown
+# 📦 Termux Vault - Production-Grade Backup & Restore System
 
-A zero-dependency, self-contained backup and disaster recovery system for Termux that ensures your entire Android Linux environment is safe, verifiable, and instantly recoverable.
+A **zero-dependency, self-contained** backup and disaster recovery system for Termux that ensures your entire Android Linux environment is safe, verifiable, and instantly recoverable.
 
-https://img.shields.io/badge/Platform-Termux-brightgreen
-https://img.shields.io/badge/Language-Bash-4EAA25
-https://img.shields.io/badge/License-MIT-blue
-https://img.shields.io/badge/Code_Quality-Production_Grade-success
-
----
-
-🎯 Why Termux Vault?
-
-Termux environments are fragile. One bad apt upgrade, a filesystem corruption, or accidental rm -rf can destroy months of configuration. Termux Vault provides:
-
-· ✅ Complete system snapshots - Every file, package, and configuration
-· ✅ Cryptographic integrity - SHA256 verification prevents silent corruption
-· ✅ Atomic operations - Partial failures are impossible
-· ✅ Zero external dependencies - Everything runs inside your project folder
-· ✅ Production reliability - 1-in-1,000,000,000 error rate target
+[![Platform](https://img.shields.io/badge/Platform-Termux-brightgreen)](https://termux.com)
+[![Language](https://img.shields.io/badge/Language-Bash-4EAA25)](https://www.gnu.org/software/bash/)
+[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
+[![Code Quality](https://img.shields.io/badge/Code_Quality-Production_Grade-success)]()
 
 ---
 
-🚀 Quick Start
+## 🎯 Why Termux Vault?
 
-Installation
+Termux environments are fragile. One bad `apt upgrade`, a filesystem corruption, or accidental `rm -rf` can destroy months of configuration. **Termux Vault** provides:
+
+- ✅ **Complete system snapshots** - Every file, package, and configuration
+- ✅ **Cryptographic integrity** - SHA256 verification prevents silent corruption
+- ✅ **Atomic operations** - Partial failures are impossible
+- ✅ **Zero external dependencies** - Everything runs inside your project folder
+- ✅ **Production reliability** - 1-in-1,000,000,000 error rate target
+
+---
+
+## 🚀 Quick Start
+
+### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/erfan1994/termux-backup
+git clone https://github.com/erfan1994/termux-backup.git
 cd termux-backup
 
-# Make scripts executable
-chmod +x termux-backup termux-restore
+# Give execution permission to installer
+chmod +x install.sh
+
+# Run the installer (creates all files and structure automatically)
+bash install.sh
+```
+
+What the installer does:
+
+· Creates complete project structure (config/, lib/, vault/)
+· Generates all module files (core.sh, logger.sh, checks.sh, etc.)
+· Creates entry points (termux-backup, termux-restore)
+· Sets execution permissions automatically for all scripts
+· Displays success message with usage instructions
+
+Verify Installation
+
+```bash
+# Check that everything is installed correctly
+ls -la
+
+# You should see these executable files:
+# -rwx------  termux-backup
+# -rwx------  termux-restore
+# drwx------  config/
+# drwx------  lib/
+# drwx------  vault/
 ```
 
 First Backup
@@ -72,6 +98,37 @@ Restore When Disaster Strikes
 
 ---
 
+📁 Project Structure After Installation
+
+```
+termux-backup/
+├── install.sh              # One-click installer
+├── termux-backup           # Backup CLI entry point (executable)
+├── termux-restore          # Restore CLI entry point (executable)
+├── config/
+│   └── backup.conf         # Configuration file
+├── lib/
+│   ├── core.sh             # Backup orchestration (executable)
+│   ├── logger.sh           # Structured logging (executable)
+│   ├── checks.sh           # Pre-flight checks (executable)
+│   ├── snapshot.sh         # System state capture (executable)
+│   ├── packages.sh         # Package management (executable)
+│   ├── archive.sh          # Compression/archival (executable)
+│   ├── restore.sh          # Restore operations (executable)
+│   └── verify.sh           # Integrity verification (executable)
+├── vault/
+│   ├── backups/            # Compressed archives (.tar.zst)
+│   ├── snapshots/          # System snapshots
+│   ├── meta/               # Backup metadata & checksums
+│   └── tmp/                # Temporary files
+├── README.md
+└── LICENSE
+```
+
+Note: All .sh files are automatically set as executable by the installer. You don't need to manually chmod them.
+
+---
+
 📚 Complete Usage Guide
 
 Backup Commands
@@ -88,11 +145,12 @@ Command Description Example
 ./termux-restore list List available backups ./termux-restore list
 ./termux-restore restore <name> Full system restore ./termux-restore restore termux-full-20260128-143022
 ./termux-restore verify <name> Verify before restore ./termux-restore verify termux-full-20260128-143022
+./termux-restore help Show help message ./termux-restore help
 
 Advanced Usage
 
 ```bash
-# Create backup with custom note (add timestamp manually)
+# Create backup with custom note
 ./termux-backup backup && echo "Before risky experiment" >> vault/backup.log
 
 # Verify all backups integrity
@@ -511,8 +569,14 @@ Development Setup
 
 ```bash
 # Fork and clone
-git clone https://github.com/YOUR_USERNAME/termux-vault.git
-cd termux-vault
+git clone https://github.com/YOUR_USERNAME/termux-backup.git
+cd termux-backup
+
+# Give execution permission
+chmod +x install.sh
+
+# Run installer
+bash install.sh
 
 # Enable debug mode
 export LOG_LEVEL=0  # LOG_DEBUG
@@ -564,6 +628,12 @@ A: Yes, a safety snapshot is automatically created first.
 Q: How long does a restore take?
 A: Typically 2-10 minutes depending on size and package count.
 
+Q: Do I need to set permissions for the installed files?
+A: No, install.sh automatically sets executable permissions (chmod +x) for all scripts. Just run the installer once and you're ready to go.
+
+Q: What if I get "Permission denied" error?
+A: Run chmod +x install.sh first, then bash install.sh. If you still get errors on other files, run chmod +x termux-backup termux-restore lib/*.sh to fix permissions manually.
+
 ---
 
 🌟 Star History
@@ -579,3 +649,4 @@ Built with ❤️ for the Termux community
 "Your Termux environment is an investment. Protect it."
 
 </div>
+```
