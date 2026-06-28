@@ -1,21 +1,188 @@
-MIT License
+TERMUX VAULT SOURCE-AVAILABLE LICENSE
+Version 1.0, January 2026
 
 Copyright (c) 2026 Erfan
+All Rights Reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. DEFINITIONS
+---------------------------------------------------------------------------
+
+"Software" means the Termux Vault backup and restore system, including all
+source code, documentation, configuration files, scripts, modules, and
+associated materials provided in this repository.
+
+"Author" means Erfan, the original creator and copyright holder of the Software.
+
+"You" means an individual or entity exercising permissions granted by this License.
+
+
+2. GRANT OF RIGHTS
+---------------------------------------------------------------------------
+
+Subject to the terms and conditions of this License, the Author hereby grants
+You a worldwide, royalty-free, non-exclusive, non-transferable license to:
+
+    a) Use the Software for personal, educational, or internal purposes;
+    b) Modify and create derivative works of the Software;
+    c) Distribute the original or modified Software for non-commercial purposes;
+    d) Contribute improvements back to the original project.
+
+All rights not expressly granted herein are reserved by the Author.
+
+
+3. RESTRICTIONS
+---------------------------------------------------------------------------
+
+You may NOT, under any circumstances:
+
+    a) Sell, license, sublicense, rent, lease, or otherwise commercialize
+       the Software or any derivative works;
+    
+    b) Offer the Software as a paid service, SaaS, or commercial product;
+    
+    c) Remove, alter, or obscure any copyright notices, attribution,
+       or license terms from the Software;
+    
+    d) Use the Software in any manner that violates applicable laws
+       or regulations;
+    
+    e) Claim ownership, authorship, or intellectual property rights
+       over the original Software;
+    
+    f) Distribute modified versions without clearly stating that
+       changes have been made and providing attribution to the original Author.
+
+
+4. INTELLECTUAL PROPERTY
+---------------------------------------------------------------------------
+
+The Software is protected by copyright laws and international treaties.
+The Author retains all rights, title, and interest in and to the Software,
+including all intellectual property rights. This License does not transfer
+any ownership rights to You.
+
+
+5. ATTRIBUTION
+---------------------------------------------------------------------------
+
+Any distribution of the Software or derivative works must:
+
+    a) Retain the above copyright notice;
+    b) Include this complete license text;
+    c) Provide clear attribution to the original Author;
+    d) Indicate if changes were made to the original Software.
+
+
+6. COMMERCIAL USE
+---------------------------------------------------------------------------
+
+Commercial use of the Software requires a separate written agreement with
+the Author. To obtain a commercial license, contact the Author at the
+email address provided in the repository.
+
+"Commercial use" includes, but is not limited to:
+
+    a) Selling access to the Software;
+    b) Incorporating the Software into a commercial product;
+    c) Using the Software to provide paid services;
+    d) Distributing the Software as part of a commercial offering.
+
+
+7. CONTRIBUTIONS
+---------------------------------------------------------------------------
+
+By submitting contributions (including but not limited to code, documentation,
+bug fixes, or feature requests) to the Software, You agree that:
+
+    a) Your contributions become part of the Software;
+    b) You grant the Author a perpetual, worldwide, non-exclusive,
+       royalty-free license to use, modify, and distribute your
+       contributions under the terms of this License;
+    c) You have the right to make such contributions.
+
+
+8. TERMINATION
+---------------------------------------------------------------------------
+
+This License is effective until terminated. Your rights under this License
+will terminate automatically without notice if You fail to comply with any
+of its terms. Upon termination, You must:
+
+    a) Cease all use of the Software;
+    b) Destroy all copies of the Software in your possession;
+    c) Remove the Software from all systems you control.
+
+Sections 3, 4, 5, 6, 7, 8, 9, 10, 11, and 12 survive termination.
+
+
+9. DISCLAIMER OF WARRANTY
+---------------------------------------------------------------------------
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. IN NO EVENT
+SHALL THE AUTHOR OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+
+10. LIMITATION OF LIABILITY
+---------------------------------------------------------------------------
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; DATA LOSS
+OR CORRUPTION; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+11. COPYRIGHT INFRINGEMENT
+---------------------------------------------------------------------------
+
+Any unauthorized use, reproduction, distribution, or commercialization of
+the Software constitutes a violation of copyright law and will be subject to
+legal action to the fullest extent permitted by law. The Author reserves the
+right to seek all available remedies, including but not limited to:
+
+    a) Injunctive relief;
+    b) Monetary damages;
+    c) Statutory damages where applicable;
+    d) Recovery of legal fees and costs;
+    e) Criminal prosecution where applicable.
+
+
+12. GENERAL PROVISIONS
+---------------------------------------------------------------------------
+
+    a) This License constitutes the entire agreement between You and the
+       Author regarding the Software;
+    
+    b) If any provision of this License is held to be unenforceable,
+       such provision shall be reformed only to the extent necessary
+       to make it enforceable;
+    
+    c) This License shall be governed by and construed in accordance
+       with applicable copyright and intellectual property laws;
+    
+    d) The Author reserves the right to update this License for future
+       versions of the Software with reasonable notice.
+
+
+13. CONTACT
+---------------------------------------------------------------------------
+
+For commercial licensing inquiries, permissions, or questions regarding
+this License, contact:
+
+    Email: [your-email@example.com]
+    GitHub: https://github.com/erfan1994
+
+
+===========================================================================
+END OF LICENSE TERMS
+===========================================================================
