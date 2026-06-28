@@ -1,15 +1,3 @@
-```markdown
-# 📦 Termux Backup - Production-Grade Backup & Restore System
-
-A **zero-dependency, self-contained** backup and disaster recovery system for Termux that ensures your entire Android Linux environment is safe, verifiable, and instantly recoverable.
-
-[![Platform](https://img.shields.io/badge/Platform-Termux-brightgreen)](https://termux.com)
-[![Language](https://img.shields.io/badge/Language-Bash-4EAA25)](https://www.gnu.org/software/bash/)
-[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
-[![Code Quality](https://img.shields.io/badge/Code_Quality-Production_Grade-success)]()
-
----
-
 ## 🎯 Why Termux Termux-backup?
 
 Termux environments are fragile. One bad `apt upgrade`, a filesystem corruption, or accidental `rm -rf` can destroy months of configuration. **Termux Vault** provides:
