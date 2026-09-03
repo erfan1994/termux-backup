@@ -1,5 +1,4 @@
 
-https://4d3vr6rfz051yd33933zrijcu-ikda6.ms8p5rcqlwvqmjmg9afljh-qw6g.workers.dev/ks8QOoG-Gx2wQfU/sub/normal?app=xray#%F0%9F%92%A6%20BPB%20Normal
 ```markdown
 # 🔒 Security Policy
 
