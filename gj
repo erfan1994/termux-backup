@@ -1,0 +1,2004 @@
+/**
+ * AJB-VIP Cloudflare Worker
+ * Single-file KV edition
+ *
+ * Required:
+ *   KV -> Workers KV Namespace
+ *
+ * Optional:
+ *   USAGE_REPORT_SECRET -> Secret
+ */
+
+const APP = {
+  name: "AJB-VIP Panel",
+  version: "5.0.0",
+  sessionTTL: 8 * 60 * 60,
+  loginWindow: 15 * 60,
+  loginMax: 8,
+  maxBody: 64 * 1024
+};
+
+const encoder = new TextEncoder();
+
+/* =========================
+   RESPONSE HELPERS
+========================= */
+
+function json(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: Object.assign({
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    }, headers)
+  });
+}
+
+function html(content, status = 200) {
+  return new Response(content, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+function redirect(url, cookie) {
+  const headers = {
+    location: url,
+    "cache-control": "no-store"
+  };
+
+  if (cookie) {
+    headers["set-cookie"] = cookie;
+  }
+
+  return new Response(null, {
+    status: 302,
+    headers
+  });
+}
+
+/* =========================
+   CRYPTO
+========================= */
+
+function randomBytes(length) {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return bytes;
+}
+
+function bytesToHex(bytes) {
+  let result = "";
+
+  for (let i = 0; i < bytes.length; i++) {
+    result += bytes[i].toString(16).padStart(2, "0");
+  }
+
+  return result;
+}
+
+function hexToBytes(hex) {
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length % 2 !== 0) {
+    throw new Error("Invalid hex");
+  }
+
+  const bytes = new Uint8Array(hex.length / 2);
+
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(
+      hex.substring(i * 2, i * 2 + 2),
+      16
+    );
+  }
+
+  return bytes;
+}
+
+function base64url(bytes) {
+  let binary = "";
+
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+async function sha256(value) {
+  const buffer = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(value)
+  );
+
+  return bytesToHex(new Uint8Array(buffer));
+}
+
+async function pbkdf2(password, saltHex, iterations) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: hexToBytes(saltHex),
+      iterations: iterations,
+      hash: "SHA-256"
+    },
+    key,
+    256
+  );
+
+  return bytesToHex(new Uint8Array(bits));
+}
+
+async function hashPassword(password) {
+  const iterations = 120000;
+  const salt = bytesToHex(randomBytes(16));
+  const hash = await pbkdf2(password, salt, iterations);
+
+  return {
+    salt,
+    hash,
+    iterations
+  };
+}
+
+async function verifyPassword(password, record) {
+  if (!record) return false;
+  if (!record.hash) return false;
+  if (!record.salt) return false;
+
+  const iterations = Number(record.iterations || 120000);
+
+  const calculated = await pbkdf2(
+    password,
+    record.salt,
+    iterations
+  );
+
+  return calculated === record.hash;
+}
+
+/* =========================
+   BASIC HELPERS
+========================= */
+
+function safeText(value, maxLength) {
+  return String(value || "")
+    .trim()
+    .substring(0, maxLength);
+}
+
+function escapeHTML(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function parseCookies(request) {
+  const result = {};
+  const cookie = request.headers.get("cookie") || "";
+
+  for (const item of cookie.split(";")) {
+    const index = item.indexOf("=");
+
+    if (index === -1) continue;
+
+    const name = item.substring(0, index).trim();
+    const value = item.substring(index + 1).trim();
+
+    result[name] = decodeURIComponent(value);
+  }
+
+  return result;
+}
+
+function sessionCookie(token) {
+  return [
+    "sid=" + encodeURIComponent(token),
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Strict",
+    "Max-Age=" + APP.sessionTTL
+  ].join("; ");
+}
+
+function clearSessionCookie() {
+  return [
+    "sid=",
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Strict",
+    "Max-Age=0"
+  ].join("; ");
+}
+
+function validUsername(username) {
+  return /^[a-zA-Z0-9_.-]{3,50}$/.test(username);
+}
+
+function userKey(username) {
+  return "user:" + username.toLowerCase();
+}
+
+function formatBytes(value) {
+  let bytes = Number(value || 0);
+
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let index = 0;
+
+  while (
+    bytes >= 1024 &&
+    index < units.length - 1
+  ) {
+    bytes /= 1024;
+    index++;
+  }
+
+  return bytes.toFixed(index === 0 ? 0 : 2) +
+    " " +
+    units[index];
+}
+
+/* =========================
+   KV DATABASE
+========================= */
+
+class Database {
+  constructor(kv) {
+    this.kv = kv;
+  }
+
+  async get(key, fallback = null) {
+    const value = await this.kv.get(key);
+
+    if (value === null) {
+      return fallback;
+    }
+
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  }
+
+  async put(key, value, options) {
+    await this.kv.put(
+      key,
+      JSON.stringify(value),
+      options
+    );
+  }
+
+  async delete(key) {
+    await this.kv.delete(key);
+  }
+
+  async list(prefix) {
+    const result = [];
+    let cursor = undefined;
+
+    do {
+      const page = await this.kv.list({
+        prefix,
+        cursor
+      });
+
+      for (const item of page.keys) {
+        result.push(item.name);
+      }
+
+      if (page.list_complete) {
+        cursor = undefined;
+      } else {
+        cursor = page.cursor;
+      }
+    } while (cursor);
+
+    return result;
+  }
+}
+
+/* =========================
+   ADMIN / SESSION
+========================= */
+
+async function getAdmin(db) {
+  return await db.get("admin");
+}
+
+async function createSession(db) {
+  const token = base64url(randomBytes(32));
+
+  await db.put(
+    "session:" + token,
+    {
+      role: "admin",
+      createdAt: Date.now(),
+      expiresAt:
+        Date.now() +
+        APP.sessionTTL * 1000
+    },
+    {
+      expirationTtl: APP.sessionTTL
+    }
+  );
+
+  return token;
+}
+
+async function getSession(db, token) {
+  if (!token) {
+    return null;
+  }
+
+  const session = await db.get(
+    "session:" + token
+  );
+
+  if (!session) {
+    return null;
+  }
+
+  if (
+    !session.expiresAt ||
+    session.expiresAt <= Date.now()
+  ) {
+    await db.delete("session:" + token);
+    return null;
+  }
+
+  return session;
+}
+
+async function requireAdmin(request, env) {
+  const db = new Database(env.KV);
+  const cookies = parseCookies(request);
+
+  const session = await getSession(
+    db,
+    cookies.sid
+  );
+
+  if (!session) {
+    return null;
+  }
+
+  if (session.role !== "admin") {
+    return null;
+  }
+
+  return session;
+}
+
+/* =========================
+   BODY
+========================= */
+
+async function readBody(request) {
+  const length = Number(
+    request.headers.get("content-length") || 0
+  );
+
+  if (length > APP.maxBody) {
+    throw new Error("body_too_large");
+  }
+
+  const text = await request.text();
+
+  if (text.length > APP.maxBody) {
+    throw new Error("body_too_large");
+  }
+
+  if (!text) {
+    return {};
+  }
+
+  const type =
+    request.headers.get("content-type") || "";
+
+  if (
+    type.includes("application/json")
+  ) {
+    return JSON.parse(text);
+  }
+
+  return Object.fromEntries(
+    new URLSearchParams(text)
+  );
+}
+
+/* =========================
+   LOGIN RATE LIMIT
+========================= */
+
+async function checkLoginRateLimit(db, ip) {
+  const fingerprint = await sha256(ip);
+  const key = "login:" + fingerprint;
+
+  const now = Date.now();
+
+  const current = await db.get(
+    key,
+    {
+      count: 0,
+      started: now
+    }
+  );
+
+  if (
+    now - current.started >
+    APP.loginWindow * 1000
+  ) {
+    await db.put(
+      key,
+      {
+        count: 1,
+        started: now
+      },
+      {
+        expirationTtl: APP.loginWindow
+      }
+    );
+
+    return true;
+  }
+
+  if (
+    current.count >= APP.loginMax
+  ) {
+    return false;
+  }
+
+  current.count++;
+
+  await db.put(
+    key,
+    current,
+    {
+      expirationTtl: APP.loginWindow
+    }
+  );
+
+  return true;
+}
+
+/* =========================
+   HTML
+========================= */
+
+function basePage(title, body) {
+  return [
+    "<!DOCTYPE html>",
+    '<html lang="fa" dir="rtl">',
+    "<head>",
+    '<meta charset="UTF-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    "<title>",
+    escapeHTML(title),
+    " — ",
+    escapeHTML(APP.name),
+    "</title>",
+    "<style>",
+    "*{box-sizing:border-box}",
+    "body{margin:0;background:#080d19;color:#eef2ff;font-family:Tahoma,Arial,sans-serif}",
+    ".wrap{max-width:1250px;margin:auto;padding:22px}",
+    ".login{max-width:430px;margin:10vh auto;padding:30px;background:#111a2c;border:1px solid #293653;border-radius:18px}",
+    ".logo{font-size:28px;font-weight:900;text-align:center;margin-bottom:20px}",
+    "h1,h2{margin-top:0}",
+    "input{width:100%;padding:12px;margin:5px 0 12px;border-radius:10px;border:1px solid #354361;background:#080e1c;color:white;outline:none}",
+    "input:focus{border-color:#668cff}",
+    "button{border:0;padding:10px 15px;border-radius:10px;background:#557cff;color:white;font-weight:700;cursor:pointer}",
+    "button.danger{background:#d94c63}",
+    ".card{background:#111a2c;border:1px solid #293653;border-radius:16px;padding:20px;margin-bottom:18px}",
+    ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}",
+    ".stat{background:#0d1526;border:1px solid #293653;border-radius:14px;padding:18px}",
+    ".stat b{display:block;font-size:26px;margin-top:8px}",
+    ".muted{color:#9aa7bf;font-size:13px}",
+    ".row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}",
+    ".top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:15px}",
+    ".actions{display:flex;gap:5px;flex-wrap:wrap}",
+    "table{width:100%;border-collapse:collapse}",
+    "th,td{padding:12px 8px;border-bottom:1px solid #293653;text-align:right;white-space:nowrap}",
+    ".badge{display:inline-block;border-radius:999px;padding:4px 9px;background:#2c3850}",
+    ".on{background:#164d36;color:#aaf0c8}",
+    ".off{background:#552837;color:#ffc4cf}",
+    ".alert{background:#542932;color:#ffd3d9;padding:12px;border-radius:10px;margin-bottom:15px}",
+    ".success{background:#174633;color:#b9f5d5;padding:12px;border-radius:10px;margin-bottom:15px}",
+    ".overflow{overflow:auto}",
+    "@media(max-width:700px){",
+    ".wrap{padding:12px}",
+    ".top{align-items:flex-start}",
+    "th:nth-child(4),td:nth-child(4){display:none}",
+    "}",
+    "</style>",
+    "</head>",
+    "<body>",
+    body,
+    "</body>",
+    "</html>"
+  ].join("");
+}
+
+function loginPage(message) {
+  const alert = message
+    ? '<div class="alert">' +
+      escapeHTML(message) +
+      "</div>"
+    : "";
+
+  const body = [
+    '<div class="login">',
+    '<div class="logo">AJB-VIP</div>',
+    "<h1>ورود مدیر</h1>",
+    alert,
+    '<form method="post" action="/login">',
+    '<input name="username" placeholder="نام کاربری" autocomplete="username" required>',
+    '<input name="password" type="password" placeholder="رمز عبور" autocomplete="current-password" required>',
+    '<button type="submit" style="width:100%">ورود</button>',
+    "</form>",
+    "</div>"
+  ].join("");
+
+  return basePage("ورود", body);
+}
+
+function setupPage(message) {
+  const alert = message
+    ? '<div class="alert">' +
+      escapeHTML(message) +
+      "</div>"
+    : "";
+
+  const body = [
+    '<div class="login">',
+    '<div class="logo">AJB-VIP</div>',
+    "<h1>راه‌اندازی اولیه</h1>",
+    alert,
+    '<form method="post" action="/setup">',
+    '<input name="username" placeholder="نام کاربری مدیر" required minlength="3" maxlength="40">',
+    '<input name="password" type="password" placeholder="رمز عبور" required minlength="8">',
+    '<input name="password2" type="password" placeholder="تکرار رمز عبور" required minlength="8">',
+    '<button type="submit" style="width:100%">ساخت مدیر</button>',
+    "</form>",
+    "</div>"
+  ].join("");
+
+  return basePage(
+    "راه‌اندازی اولیه",
+    body
+  );
+}
+
+/* =========================
+   DASHBOARD
+========================= */
+
+function dashboard(users, noticeType, noticeText) {
+  let active = 0;
+  let disabled = 0;
+  let quota = 0;
+  let used = 0;
+
+  for (const user of users) {
+    if (user.enabled) {
+      active++;
+    } else {
+      disabled++;
+    }
+
+    quota += Number(user.quota || 0);
+    used += Number(user.used || 0);
+  }
+
+  let notice = "";
+
+  if (noticeText) {
+    notice =
+      '<div class="' +
+      (noticeType === "success"
+        ? "success"
+        : "alert") +
+      '">' +
+      escapeHTML(noticeText) +
+      "</div>";
+  }
+
+  let rows = "";
+
+  for (const user of users) {
+    const userQuota =
+      Number(user.quota || 0);
+
+    const userUsed =
+      Number(user.used || 0);
+
+    const remaining = Math.max(
+      0,
+      userQuota - userUsed
+    );
+
+    let expiry = "بدون انقضا";
+
+    if (user.expiresAt) {
+      expiry = new Date(
+        user.expiresAt
+      ).toLocaleString("fa-IR");
+    }
+
+    const status = user.enabled
+      ? '<span class="badge on">فعال</span>'
+      : '<span class="badge off">غیرفعال</span>';
+
+    rows += [
+      "<tr>",
+      "<td>",
+      "<b>",
+      escapeHTML(user.username),
+      "</b>",
+      user.note
+        ? '<div class="muted">' +
+          escapeHTML(user.note) +
+          "</div>"
+        : "",
+      "</td>",
+      "<td>",
+      status,
+      "</td>",
+      "<td>",
+      escapeHTML(formatBytes(userQuota)),
+      "</td>",
+      "<td>",
+      escapeHTML(formatBytes(userUsed)),
+      '<div class="muted">باقی: ',
+      escapeHTML(formatBytes(remaining)),
+      "</div>",
+      "</td>",
+      "<td>",
+      escapeHTML(expiry),
+      "</td>",
+      "<td>",
+      escapeHTML(
+        String(user.maxDevices || 1)
+      ),
+      "</td>",
+      "<td>",
+      '<div class="actions">',
+
+      '<form method="post" action="/admin/toggle">',
+      '<input type="hidden" name="username" value="',
+      escapeHTML(user.username),
+      '">',
+      "<button>",
+      user.enabled
+        ? "غیرفعال"
+        : "فعال",
+      "</button>",
+      "</form>",
+
+      '<form method="post" action="/admin/reset">',
+      '<input type="hidden" name="username" value="',
+      escapeHTML(user.username),
+      '">',
+      "<button>ریست مصرف</button>",
+      "</form>",
+
+      '<form method="post" action="/admin/delete">',
+      '<input type="hidden" name="username" value="',
+      escapeHTML(user.username),
+      '">',
+      "<button class=\"danger\">حذف</button>",
+      "</form>",
+
+      "</div>",
+      "</td>",
+      "</tr>"
+    ].join("");
+  }
+
+  if (!rows) {
+    rows =
+      '<tr><td colspan="7">هیچ کاربری وجود ندارد.</td></tr>';
+  }
+
+  const body = [
+    '<div class="wrap">',
+
+    '<div class="top">',
+    "<div>",
+    '<div class="logo" style="text-align:right">AJB-VIP</div>',
+    '<div class="muted">پنل مدیریت کاربران</div>',
+    "</div>",
+
+    '<form method="post" action="/logout">',
+    '<button class="danger">خروج</button>',
+    "</form>",
+    "</div>",
+
+    notice,
+
+    '<div class="grid">',
+
+    '<div class="stat">',
+    '<span class="muted">کل کاربران</span>',
+    "<b>",
+    users.length,
+    "</b>",
+    "</div>",
+
+    '<div class="stat">',
+    '<span class="muted">فعال</span>',
+    "<b>",
+    active,
+    "</b>",
+    "</div>",
+
+    '<div class="stat">',
+    '<span class="muted">غیرفعال</span>',
+    "<b>",
+    disabled,
+    "</b>",
+    "</div>",
+
+    '<div class="stat">',
+    '<span class="muted">سهمیه کل</span>',
+    "<b>",
+    escapeHTML(formatBytes(quota)),
+    "</b>",
+    "</div>",
+
+    '<div class="stat">',
+    '<span class="muted">مصرف</span>',
+    "<b>",
+    escapeHTML(formatBytes(used)),
+    "</b>",
+    "</div>",
+
+    "</div>",
+
+    '<div class="card">',
+    "<h2>افزودن کاربر</h2>",
+
+    '<form method="post" action="/admin/add">',
+
+    '<div class="row">',
+
+    "<label>",
+    "نام کاربری",
+    '<input name="username" maxlength="50" required>',
+    "</label>",
+
+    "<label>",
+    "سهمیه GB",
+    '<input name="quotaGb" type="number" min="0" step="0.01" value="10" required>',
+    "</label>",
+
+    "<label>",
+    "تاریخ انقضا",
+    '<input name="expiresAt" type="datetime-local">',
+    "</label>",
+
+    "<label>",
+    "حداکثر دستگاه",
+    '<input name="maxDevices" type="number" min="1" max="100" value="1" required>',
+    "</label>",
+
+    "<label>",
+    "یادداشت",
+    '<input name="note" maxlength="120">',
+    "</label>",
+
+    "</div>",
+
+    '<button type="submit">ایجاد کاربر</button>',
+
+    "</form>",
+    "</div>",
+
+    '<div class="card">',
+    "<h2>لیست کاربران</h2>",
+
+    '<div class="overflow">',
+
+    "<table>",
+    "<thead>",
+    "<tr>",
+    "<th>کاربر</th>",
+    "<th>وضعیت</th>",
+    "<th>سهمیه</th>",
+    "<th>مصرف</th>",
+    "<th>انقضا</th>",
+    "<th>دستگاه</th>",
+    "<th>عملیات</th>",
+    "</tr>",
+    "</thead>",
+
+    "<tbody>",
+    rows,
+    "</tbody>",
+
+    "</table>",
+    "</div>",
+    "</div>",
+
+    '<div class="card">',
+    '<div class="muted">',
+    "AJB-VIP Panel ",
+    escapeHTML(APP.version),
+    " — Cloudflare Workers + KV",
+    "</div>",
+    "</div>",
+
+    "</div>"
+  ].join("");
+
+  return basePage(
+    "داشبورد",
+    body
+  );
+}
+
+/* =========================
+   USERS
+========================= */
+
+async function getUser(db, username) {
+  return await db.get(
+    userKey(username)
+  );
+}
+
+async function getAllUsers(db) {
+  const keys = await db.list("user:");
+  const users = [];
+
+  for (const key of keys) {
+    const user = await db.get(key);
+
+    if (user) {
+      users.push(user);
+    }
+  }
+
+  users.sort(function(a, b) {
+    return a.username.localeCompare(
+      b.username
+    );
+  });
+
+  return users;
+}
+
+function userUsable(user) {
+  if (!user) {
+    return false;
+  }
+
+  if (!user.enabled) {
+    return false;
+  }
+
+  if (
+    user.expiresAt &&
+    Number(user.expiresAt) <= Date.now()
+  ) {
+    return false;
+  }
+
+  if (
+    Number(user.quota || 0) > 0 &&
+    Number(user.used || 0) >=
+      Number(user.quota || 0)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+/* =========================
+   SETUP
+========================= */
+
+async function handleSetup(
+  request,
+  env
+) {
+  const db = new Database(env.KV);
+
+  const admin =
+    await getAdmin(db);
+
+  if (admin) {
+    return redirect("/panel");
+  }
+
+  if (request.method === "GET") {
+    return html(setupPage(""));
+  }
+
+  const data =
+    await readBody(request);
+
+  const username =
+    safeText(data.username, 40);
+
+  const password =
+    String(data.password || "");
+
+  const password2 =
+    String(data.password2 || "");
+
+  if (
+    !/^[a-zA-Z0-9_.-]{3,40}$/.test(
+      username
+    )
+  ) {
+    return html(
+      setupPage(
+        "نام کاربری نامعتبر است."
+      )
+    );
+  }
+
+  if (password.length < 8) {
+    return html(
+      setupPage(
+        "رمز عبور باید حداقل ۸ کاراکتر باشد."
+      )
+    );
+  }
+
+  if (password !== password2) {
+    return html(
+      setupPage(
+        "تکرار رمز عبور صحیح نیست."
+      )
+    );
+  }
+
+  const existing =
+    await getAdmin(db);
+
+  if (existing) {
+    return redirect("/panel");
+  }
+
+  const passwordData =
+    await hashPassword(password);
+
+  await db.put(
+    "admin",
+    {
+      username,
+      hash: passwordData.hash,
+      salt: passwordData.salt,
+      iterations:
+        passwordData.iterations,
+      createdAt: Date.now()
+    }
+  );
+
+  return redirect("/panel");
+}
+
+/* =========================
+   LOGIN
+========================= */
+
+async function handleLogin(
+  request,
+  env
+) {
+  const db = new Database(env.KV);
+
+  const admin =
+    await getAdmin(db);
+
+  if (!admin) {
+    return redirect("/setup");
+  }
+
+  if (request.method === "GET") {
+    return html(loginPage(""));
+  }
+
+  const ip =
+    request.headers.get(
+      "CF-Connecting-IP"
+    ) || "unknown";
+
+  const allowed =
+    await checkLoginRateLimit(
+      db,
+      ip
+    );
+
+  if (!allowed) {
+    return html(
+      loginPage(
+        "تعداد تلاش‌های ورود زیاد است. بعداً دوباره امتحان کنید."
+      )
+    );
+  }
+
+  const data =
+    await readBody(request);
+
+  const username =
+    safeText(data.username, 40);
+
+  const password =
+    String(data.password || "");
+
+  const valid =
+    username === admin.username &&
+    await verifyPassword(
+      password,
+      admin
+    );
+
+  if (!valid) {
+    return html(
+      loginPage(
+        "نام کاربری یا رمز عبور اشتباه است."
+      )
+    );
+  }
+
+  const token =
+    await createSession(db);
+
+  return redirect(
+    "/panel",
+    sessionCookie(token)
+  );
+}
+
+/* =========================
+   LOGOUT
+========================= */
+
+async function handleLogout(
+  request,
+  env
+) {
+  const db = new Database(env.KV);
+  const cookies =
+    parseCookies(request);
+
+  if (cookies.sid) {
+    await db.delete(
+      "session:" + cookies.sid
+    );
+  }
+
+  return redirect(
+    "/login",
+    clearSessionCookie()
+  );
+}
+
+/* =========================
+   ADD USER
+========================= */
+
+async function handleAdd(
+  request,
+  env
+) {
+  const admin =
+    await requireAdmin(
+      request,
+      env
+    );
+
+  if (!admin) {
+    return redirect("/login");
+  }
+
+  const db =
+    new Database(env.KV);
+
+  const data =
+    await readBody(request);
+
+  const username =
+    safeText(data.username, 50);
+
+  if (!validUsername(username)) {
+    return redirect(
+      "/panel?e=نام%20کاربری%20نامعتبر"
+    );
+  }
+
+  const existing =
+    await getUser(
+      db,
+      username
+    );
+
+  if (existing) {
+    return redirect(
+      "/panel?e=این%20کاربر%20از%20قبل%20وجود%20دارد"
+    );
+  }
+
+  const quotaGb =
+    Number(data.quotaGb || 0);
+
+  const maxDevices =
+    Number(data.maxDevices || 1);
+
+  if (
+    !Number.isFinite(quotaGb) ||
+    quotaGb < 0
+  ) {
+    return redirect(
+      "/panel?e=سهمیه%20نامعتبر"
+    );
+  }
+
+  if (
+    !Number.isInteger(maxDevices) ||
+    maxDevices < 1 ||
+    maxDevices > 100
+  ) {
+    return redirect(
+      "/panel?e=تعداد%20دستگاه%20نامعتبر"
+    );
+  }
+
+  let expiresAt = null;
+
+  if (data.expiresAt) {
+    const timestamp =
+      new Date(
+        data.expiresAt
+      ).getTime();
+
+    if (
+      Number.isFinite(timestamp)
+    ) {
+      expiresAt = timestamp;
+    }
+  }
+
+  const user = {
+    username,
+    enabled: true,
+    quota: Math.round(
+      quotaGb *
+      1024 *
+      1024 *
+      1024
+    ),
+    used: 0,
+    expiresAt,
+    maxDevices,
+    devices: [],
+    note: safeText(
+      data.note,
+      120
+    ),
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+
+  await db.put(
+    userKey(username),
+    user
+  );
+
+  return redirect(
+    "/panel?ok=کاربر%20با%20موفقیت%20ساخته%20شد"
+  );
+}
+
+/* =========================
+   TOGGLE
+========================= */
+
+async function handleToggle(
+  request,
+  env
+) {
+  const admin =
+    await requireAdmin(
+      request,
+      env
+    );
+
+  if (!admin) {
+    return redirect("/login");
+  }
+
+  const db =
+    new Database(env.KV);
+
+  const data =
+    await readBody(request);
+
+  const username =
+    safeText(
+      data.username,
+      50
+    );
+
+  const user =
+    await getUser(
+      db,
+      username
+    );
+
+  if (!user) {
+    return redirect(
+      "/panel?e=کاربر%20یافت%20نشد"
+    );
+  }
+
+  user.enabled =
+    !user.enabled;
+
+  user.updatedAt =
+    Date.now();
+
+  await db.put(
+    userKey(username),
+    user
+  );
+
+  return redirect(
+    "/panel?ok=وضعیت%20کاربر%20تغییر%20کرد"
+  );
+}
+
+/* =========================
+   RESET USAGE
+========================= */
+
+async function handleReset(
+  request,
+  env
+) {
+  const admin =
+    await requireAdmin(
+      request,
+      env
+    );
+
+  if (!admin) {
+    return redirect("/login");
+  }
+
+  const db =
+    new Database(env.KV);
+
+  const data =
+    await readBody(request);
+
+  const username =
+    safeText(
+      data.username,
+      50
+    );
+
+  const user =
+    await getUser(
+      db,
+      username
+    );
+
+  if (!user) {
+    return redirect(
+      "/panel?e=کاربر%20یافت%20نشد"
+    );
+  }
+
+  user.used = 0;
+  user.updatedAt =
+    Date.now();
+
+  await db.put(
+    userKey(username),
+    user
+  );
+
+  return redirect(
+    "/panel?ok=مصرف%20کاربر%20ریست%20شد"
+  );
+}
+
+/* =========================
+   DELETE
+========================= */
+
+async function handleDelete(
+  request,
+  env
+) {
+  const admin =
+    await requireAdmin(
+      request,
+      env
+    );
+
+  if (!admin) {
+    return redirect("/login");
+  }
+
+  const db =
+    new Database(env.KV);
+
+  const data =
+    await readBody(request);
+
+  const username =
+    safeText(
+      data.username,
+      50
+    );
+
+  await db.delete(
+    userKey(username)
+  );
+
+  return redirect(
+    "/panel?ok=کاربر%20حذف%20شد"
+  );
+}
+
+/* =========================
+   USER CHECK API
+========================= */
+
+/*
+POST /api/user/check
+
+{
+  "username": "user1",
+  "deviceId": "device-123"
+}
+*/
+
+async function handleUserCheck(
+  request,
+  env
+) {
+  const db =
+    new Database(env.KV);
+
+  const data =
+    await readBody(request);
+
+  const username =
+    safeText(
+      data.username,
+      50
+    );
+
+  const deviceId =
+    safeText(
+      data.deviceId,
+      200
+    );
+
+  if (!username) {
+    return json(
+      {
+        ok: false,
+        error:
+          "username_required"
+      },
+      400
+    );
+  }
+
+  const user =
+    await getUser(
+      db,
+      username
+    );
+
+  if (!user) {
+    return json(
+      {
+        ok: false,
+        error:
+          "user_not_found"
+      },
+      404
+    );
+  }
+
+  if (!userUsable(user)) {
+    let reason =
+      "disabled";
+
+    if (
+      user.expiresAt &&
+      Number(user.expiresAt) <=
+        Date.now()
+    ) {
+      reason = "expired";
+    } else if (
+      Number(user.quota || 0) > 0 &&
+      Number(user.used || 0) >=
+        Number(user.quota || 0)
+    ) {
+      reason =
+        "quota_exceeded";
+    }
+
+    return json(
+      {
+        ok: false,
+        username:
+          user.username,
+        reason,
+        remaining:
+          Math.max(
+            0,
+            Number(user.quota || 0) -
+            Number(user.used || 0)
+          )
+      },
+      403
+    );
+  }
+
+  if (deviceId) {
+    const devices =
+      Array.isArray(user.devices)
+        ? user.devices
+        : [];
+
+    if (!devices.includes(deviceId)) {
+      if (
+        devices.length >=
+        Number(
+          user.maxDevices || 1
+        )
+      ) {
+        return json(
+          {
+            ok: false,
+            error:
+              "device_limit",
+            maxDevices:
+              Number(
+                user.maxDevices || 1
+              )
+          },
+          403
+        );
+      }
+
+      user.devices =
+        devices
+          .concat(deviceId)
+          .slice(0, 100);
+
+      user.updatedAt =
+        Date.now();
+
+      await db.put(
+        userKey(username),
+        user
+      );
+    }
+  }
+
+  return json({
+    ok: true,
+    username:
+      user.username,
+    enabled:
+      !!user.enabled,
+    expiresAt:
+      user.expiresAt,
+    quota:
+      Number(user.quota || 0),
+    used:
+      Number(user.used || 0),
+    remaining:
+      Math.max(
+        0,
+        Number(user.quota || 0) -
+        Number(user.used || 0)
+      ),
+    maxDevices:
+      Number(
+        user.maxDevices || 1
+      ),
+    devices:
+      Array.isArray(user.devices)
+        ? user.devices.length
+        : 0
+  });
+}
+
+/* =========================
+   USAGE REPORT
+========================= */
+
+/*
+POST /api/usage/report
+
+Header:
+X-Usage-Secret: YOUR_SECRET
+
+JSON:
+{
+  "username": "user1",
+  "bytes": 123456
+}
+*/
+
+async function handleUsageReport(
+  request,
+  env
+) {
+  if (!env.USAGE_REPORT_SECRET) {
+    return json(
+      {
+        ok: false,
+        error:
+          "usage_reporting_not_configured"
+      },
+      503
+    );
+  }
+
+  const supplied =
+    request.headers.get(
+      "X-Usage-Secret"
+    ) || "";
+
+  if (
+    !supplied ||
+    supplied !==
+      env.USAGE_REPORT_SECRET
+  ) {
+    return json(
+      {
+        ok: false,
+        error:
+          "unauthorized"
+      },
+      401
+    );
+  }
+
+  const db =
+    new Database(env.KV);
+
+  const data =
+    await readBody(request);
+
+  const username =
+    safeText(
+      data.username,
+      50
+    );
+
+  const bytes =
+    Number(data.bytes);
+
+  if (
+    !username ||
+    !Number.isFinite(bytes) ||
+    bytes < 0
+  ) {
+    return json(
+      {
+        ok: false,
+        error:
+          "invalid_request"
+      },
+      400
+    );
+  }
+
+  const user =
+    await getUser(
+      db,
+      username
+    );
+
+  if (!user) {
+    return json(
+      {
+        ok: false,
+        error:
+          "user_not_found"
+      },
+      404
+    );
+  }
+
+  user.used =
+    Math.max(
+      0,
+      Number(user.used || 0) +
+      Math.floor(bytes)
+    );
+
+  user.updatedAt =
+    Date.now();
+
+  await db.put(
+    userKey(username),
+    user
+  );
+
+  return json({
+    ok: true,
+    username:
+      user.username,
+    used:
+      user.used,
+    quota:
+      Number(user.quota || 0),
+    remaining:
+      Math.max(
+        0,
+        Number(user.quota || 0) -
+        user.used
+      )
+  });
+}
+
+/* =========================
+   SUBSCRIPTION API
+========================= */
+
+async function handleSubscription(
+  request,
+  env
+) {
+  const url =
+    new URL(request.url);
+
+  const username =
+    safeText(
+      url.searchParams.get(
+        "username"
+      ),
+      50
+    );
+
+  if (!username) {
+    return json(
+      {
+        ok: false,
+        error:
+          "username_required"
+      },
+      400
+    );
+  }
+
+  const db =
+    new Database(env.KV);
+
+  const user =
+    await getUser(
+      db,
+      username
+    );
+
+  if (!user) {
+    return json(
+      {
+        ok: false,
+        error:
+          "user_not_found"
+      },
+      404
+    );
+  }
+
+  return json({
+    ok: true,
+    username:
+      user.username,
+    enabled:
+      !!user.enabled,
+    expiresAt:
+      user.expiresAt,
+    quota:
+      Number(user.quota || 0),
+    used:
+      Number(user.used || 0),
+    remaining:
+      Math.max(
+        0,
+        Number(user.quota || 0) -
+        Number(user.used || 0)
+      ),
+    maxDevices:
+      Number(
+        user.maxDevices || 1
+      ),
+    devices:
+      Array.isArray(user.devices)
+        ? user.devices.length
+        : 0
+  });
+}
+
+/* =========================
+   PANEL
+========================= */
+
+async function handlePanel(
+  request,
+  env
+) {
+  const db =
+    new Database(env.KV);
+
+  const admin =
+    await getAdmin(db);
+
+  if (!admin) {
+    return redirect("/setup");
+  }
+
+  const session =
+    await requireAdmin(
+      request,
+      env
+    );
+
+  if (!session) {
+    return redirect("/login");
+  }
+
+  const url =
+    new URL(request.url);
+
+  const error =
+    url.searchParams.get("e");
+
+  const success =
+    url.searchParams.get("ok");
+
+  const users =
+    await getAllUsers(db);
+
+  return html(
+    dashboard(
+      users,
+      success
+        ? "success"
+        : "error",
+      success || error || ""
+    )
+  );
+}
+
+/* =========================
+   ROUTER
+========================= */
+
+async function router(
+  request,
+  env
+) {
+  if (!env.KV) {
+    return html(
+      basePage(
+        "خطا",
+        [
+          '<div class="login">',
+          "<h1>KV پیدا نشد</h1>",
+          "<p>",
+          "یک Workers KV Namespace بسازید ",
+          "و Binding آن را دقیقاً ",
+          "<b>KV</b>",
+          " قرار دهید.",
+          "</p>",
+          "</div>"
+        ].join("")
+      ),
+      500
+    );
+  }
+
+  const url =
+    new URL(request.url);
+
+  const path =
+    url.pathname;
+
+  try {
+    if (
+      path === "/setup"
+    ) {
+      return await handleSetup(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/login"
+    ) {
+      return await handleLogin(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/logout"
+    ) {
+      return await handleLogout(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/" ||
+      path === "/panel"
+    ) {
+      return await handlePanel(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/admin/add" &&
+      request.method === "POST"
+    ) {
+      return await handleAdd(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/admin/toggle" &&
+      request.method === "POST"
+    ) {
+      return await handleToggle(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/admin/reset" &&
+      request.method === "POST"
+    ) {
+      return await handleReset(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/admin/delete" &&
+      request.method === "POST"
+    ) {
+      return await handleDelete(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/api/user/check" &&
+      request.method === "POST"
+    ) {
+      return await handleUserCheck(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/api/usage/report" &&
+      request.method === "POST"
+    ) {
+      return await handleUsageReport(
+        request,
+        env
+      );
+    }
+
+    if (
+      path === "/api/subscription" &&
+      request.method === "GET"
+    ) {
+      return await handleSubscription(
+        request,
+        env
+      );
+    }
+
+    return json(
+      {
+        ok: false,
+        error: "not_found"
+      },
+      404
+    );
+
+  } catch (error) {
+    console.error(
+      "Worker error:",
+      error
+    );
+
+    if (
+      path.startsWith("/api/")
+    ) {
+      return json(
+        {
+          ok: false,
+          error:
+            "internal_error"
+        },
+        500
+      );
+    }
+
+    return html(
+      basePage(
+        "خطا",
+        [
+          '<div class="login">',
+          "<h1>خطای داخلی</h1>",
+          "<p>",
+          "در پردازش درخواست خطایی رخ داد.",
+          "</p>",
+          "</div>"
+        ].join("")
+      ),
+      500
+    );
+  }
+}
+
+/* =========================
+   CLOUDFLARE ENTRY
+========================= */
+
+export default {
+  async fetch(
+    request,
+    env,
+    ctx
+  ) {
+    return router(
+      request,
+      env
+    );
+  }
+};
