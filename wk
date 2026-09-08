@@ -1,0 +1,1114 @@
+import { connect } from "cloudflare:sockets";
+
+// ============  تنظیمات اصلی ============
+let SUB_PATH = "subscription";
+let FAKE_WEB = "https://www.google.com";
+let ADMIN_USER = "admin";
+let ADMIN_PASS = "admin";
+let PROXY_IP = "proxyip.cmliussss.net";
+const DEFAULT_IP = "openai.com";
+const DEFAULT_LANG = "en";
+const PANEL_NAME = "AJB-VIP";
+const ADMIN_PATH = "/sync/dash/";
+
+// ============  دیکشنری دو زبانه ============
+const i18n = {
+  en: {
+    panelName: "AJB-VIP Panel",
+    title: "AJB-VIP Admin Panel",
+    users: "Users",
+    ipCache: "IP Cache",
+    rateLimited: "Rate Limited",
+    addUser: "Add User",
+    uuid: "UUID",
+    limit: "Limit (GB)",
+    add: "Add User",
+    actions: "Actions",
+    active: "Active",
+    disabled: "Disabled",
+    toggle: "Toggle",
+    delete: "Delete",
+    forceDiscover: "Force IP Discovery",
+    hostname: "Hostname",
+    discover: "Discover Best IP",
+    lastUpdated: "Last Updated",
+    unauthorized: "Unauthorized",
+    forbidden: "Forbidden",
+    notFound: "Not Found",
+    rateLimitExceeded: "Rate limit exceeded",
+    status: "Status",
+    ok: "OK",
+    uptime: "Uptime",
+    subscription: "Subscription Info",
+    usage: "Usage",
+    lastSeen: "Last Seen",
+    importLink: "Import this link into V2Ray or Clash client",
+    language: "Language",
+    persian: "فارسی",
+    english: "English",
+    totalTraffic: "Total Traffic",
+    welcome: "Welcome to AJB-VIP Panel",
+    userManagement: "User Management",
+    systemStats: "System Statistics",
+    ipManagement: "IP Management",
+    noUsers: "No users registered",
+    confirmDelete: "Are you sure you want to delete this user?",
+    userAdded: "User added successfully",
+    userDeleted: "User deleted successfully",
+    userToggled: "User status toggled successfully",
+    ipDiscovered: "IP discovered successfully",
+    error: "Error occurred",
+    pleaseWait: "Please wait...",
+    loading: "Loading...",
+    changePassword: "Change Password",
+    currentPassword: "Current Password",
+    newPassword: "New Password",
+    confirmPassword: "Confirm Password",
+    passwordChanged: "Password changed successfully",
+    passwordMismatch: "Passwords do not match",
+    wrongPassword: "Current password is incorrect",
+    passwordRequirements: "Password must be at least 6 characters",
+    change: "Change Password",
+    password: "Password",
+    login: "Login",
+    logout: "Logout",
+    dashboard: "Dashboard",
+    settings: "Settings"
+  },
+  fa: {
+    panelName: "پنل AJB-VIP",
+    title: "پنل مدیریت AJB-VIP",
+    users: "کاربران",
+    ipCache: "کش آی‌پی",
+    rateLimited: "محدودیت نرخ",
+    addUser: "افزودن کاربر",
+    uuid: "UUID",
+    limit: "محدودیت (گیگابایت)",
+    add: "افزودن کاربر",
+    actions: "عملیات",
+    active: "فعال",
+    disabled: "غیرفعال",
+    toggle: "تغییر وضعیت",
+    delete: "حذف",
+    forceDiscover: "تشخیص اجباری آی‌پی",
+    hostname: "نام میزبان",
+    discover: "تشخیص بهترین آی‌پی",
+    lastUpdated: "آخرین به‌روزرسانی",
+    unauthorized: "مجوز ندارید",
+    forbidden: "دسترسی ممنوع",
+    notFound: "یافت نشد",
+    rateLimitExceeded: "محدودیت نرخ رد شده است",
+    status: "وضعیت",
+    ok: "سالم",
+    uptime: "زمان فعالیت",
+    subscription: "اطلاعات اشتراک",
+    usage: "مصرف",
+    lastSeen: "آخرین مشاهده",
+    importLink: "این لینک را در کلاینت V2Ray یا Clash وارد کنید",
+    language: "زبان",
+    persian: "فارسی",
+    english: "انگلیسی",
+    totalTraffic: "کل ترافیک",
+    welcome: "به پنل AJB-VIP خوش آمدید",
+    userManagement: "مدیریت کاربران",
+    systemStats: "آمار سیستم",
+    ipManagement: "مدیریت آی‌پی",
+    noUsers: "کاربری ثبت نشده است",
+    confirmDelete: "آیا از حذف این کاربر اطمینان دارید؟",
+    userAdded: "کاربر با موفقیت افزوده شد",
+    userDeleted: "کاربر با موفقیت حذف شد",
+    userToggled: "وضعیت کاربر با موفقیت تغییر کرد",
+    ipDiscovered: "آی‌پی با موفقیت تشخیص داده شد",
+    error: "خطا رخ داد",
+    pleaseWait: "لطفاً صبر کنید...",
+    loading: "در حال بارگذاری...",
+    changePassword: "تغییر رمز عبور",
+    currentPassword: "رمز عبور فعلی",
+    newPassword: "رمز عبور جدید",
+    confirmPassword: "تایید رمز عبور",
+    passwordChanged: "رمز عبور با موفقیت تغییر کرد",
+    passwordMismatch: "رمزهای عبور مطابقت ندارند",
+    wrongPassword: "رمز عبور فعلی اشتباه است",
+    passwordRequirements: "رمز عبور باید حداقل ۶ کاراکتر باشد",
+    change: "تغییر رمز عبور",
+    password: "رمز عبور",
+    login: "ورود",
+    logout: "خروج",
+    dashboard: "داشبورد",
+    settings: "تنظیمات"
+  }
+};
+
+// ============  توابع کمکی ============
+function getLang(request) {
+  const cookie = request.headers.get("Cookie");
+  if (cookie) {
+    const match = cookie.match(/lang=([^;]+)/);
+    if (match) return match[1];
+  }
+  
+  const acceptLang = request.headers.get("Accept-Language");
+  if (acceptLang && acceptLang.includes("fa")) {
+    return "fa";
+  }
+  
+  const url = new URL(request.url);
+  const langParam = url.searchParams.get("lang");
+  if (langParam === "fa" || langParam === "en") {
+    return langParam;
+  }
+  
+  return DEFAULT_LANG;
+}
+
+function t(key, lang) {
+  return i18n[lang]?.[key] || i18n[DEFAULT_LANG][key] || key;
+}
+
+function getDirection(lang) {
+  return lang === "fa" ? "rtl" : "ltr";
+}
+
+function getLanguageSelector(currentLang) {
+  const options = [
+    { value: 'en', label: i18n.en.english },
+    { value: 'fa', label: i18n.fa.persian }
+  ];
+  
+  return `
+    <div style="position:fixed;top:10px;right:10px;z-index:1000;background:white;padding:10px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)">
+      <form method="GET" style="display:inline">
+        <select name="lang" onchange="this.form.submit()" style="padding:8px;border-radius:4px;border:1px solid #ddd">
+          ${options.map(opt => 
+            `<option value="${opt.value}" ${currentLang === opt.value ? 'selected' : ''}>${opt.label}</option>`
+          ).join('')}
+        </select>
+      </form>
+    </div>
+  `;
+}
+
+// ============  ذخیره‌سازی ============
+let userDB = new Map();
+let ipCache = new Map();
+let rateLimit = new Map();
+let adminPassword = ADMIN_PASS;
+
+// ============  توابع اصلی ============
+function generateUUID(subPath) {
+  const hash = Array.from(new TextEncoder().encode(subPath))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 20)
+    .padEnd(20, "0");
+  return `${hash.slice(0,8)}-0000-4000-8000-${hash.slice(-12)}`;
+}
+
+function getBestIP(hostname) {
+  const cached = ipCache.get(hostname);
+  if (cached && (Date.now() - cached.timestamp) < 300000) {
+    return cached.ip;
+  }
+  return DEFAULT_IP;
+}
+
+async function testIP(ip, port = 443) {
+  const start = Date.now();
+  try {
+    await fetch(`https://${ip}:${port}/`, { 
+      signal: AbortSignal.timeout(3000),
+      headers: { 'Host': 'cloudflare.com' }
+    });
+    return Date.now() - start;
+  } catch {
+    return Infinity;
+  }
+}
+
+async function discoverBestIP(hostname) {
+  const commonIPs = [
+    '104.16.0.0', '104.17.0.0', '104.18.0.0', '104.19.0.0',
+    '104.20.0.0', '104.21.0.0', '104.22.0.0', '104.23.0.0'
+  ];
+  
+  let bestIP = DEFAULT_IP;
+  let bestLatency = Infinity;
+  
+  for (const ip of commonIPs) {
+    const latency = await testIP(ip);
+    if (latency < bestLatency) {
+      bestLatency = latency;
+      bestIP = ip;
+    }
+  }
+  
+  ipCache.set(hostname, { ip: bestIP, latency: bestLatency, timestamp: Date.now() });
+  return bestIP;
+}
+
+function authenticateUser(uuid) {
+  if (!userDB.has(uuid)) {
+    userDB.set(uuid, { 
+      limit: 100 * 1024 * 1024 * 1024,
+      usage: 0, 
+      lastSeen: Date.now(),
+      enabled: true
+    });
+  }
+  const user = userDB.get(uuid);
+  if (!user.enabled || user.usage > user.limit) {
+    return false;
+  }
+  return user;
+}
+
+function trackUsage(uuid, bytes) {
+  const user = userDB.get(uuid);
+  if (user) {
+    user.usage += bytes;
+    user.lastSeen = Date.now();
+    userDB.set(uuid, user);
+  }
+}
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const timestamps = rateLimit.get(ip) || [];
+  const recent = timestamps.filter(t => (now - t) < 60000);
+  if (recent.length > 60) {
+    return false;
+  }
+  recent.push(now);
+  rateLimit.set(ip, recent);
+  return true;
+}
+
+function validateUUID(bytes, expected) {
+  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+  const uuid = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  return uuid.toLowerCase() === expected.toLowerCase();
+}
+
+// ============  بررسی سشن ============
+function checkSession(request) {
+  const cookie = request.headers.get("Cookie");
+  if (!cookie) return false;
+  
+  const sessionMatch = cookie.match(/session=([^;]+)/);
+  if (!sessionMatch) return false;
+  
+  try {
+    const decoded = atob(sessionMatch[1]);
+    const parts = decoded.split(":");
+    if (parts.length === 3) {
+      const [username, password, timestamp] = parts;
+      // اعتبار سشن: ۲۴ ساعت
+      const age = Date.now() - parseInt(timestamp);
+      if (age > 86400000) return false; // 24 hours
+      return username === ADMIN_USER && password === adminPassword;
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
+// ============  Handler اصلی ============
+export default {
+  async fetch(request, env) {
+    SUB_PATH = env.SUB_PATH ?? SUB_PATH;
+    FAKE_WEB = env.FAKE_WEB ?? FAKE_WEB;
+    ADMIN_USER = env.ADMIN_USER ?? ADMIN_USER;
+    const envPassword = env.ADMIN_PASS;
+    if (envPassword) {
+      adminPassword = envPassword;
+    }
+    PROXY_IP = env.PROXY_IP ?? PROXY_IP;
+    
+    const url = new URL(request.url);
+    const clientIP = request.headers.get("cf-connecting-ip") || "unknown";
+    const lang = getLang(request);
+    
+    // ============  مسیر ورود به پنل مدیریت ============
+    if (url.pathname.startsWith(ADMIN_PATH)) {
+      return handleAdmin(request, lang);
+    }
+    
+    // ============  مدیریت API ============
+    if (url.pathname === "/api") {
+      return handleAPI(request);
+    }
+    
+    // ============  مدیریت سلامت ============
+    if (url.pathname === "/health") {
+      return new Response(JSON.stringify({
+        status: "ok",
+        panel: PANEL_NAME,
+        users: userDB.size,
+        ipCache: ipCache.size,
+        lang: lang,
+        adminPath: ADMIN_PATH
+      }), { 
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    
+    // ============  محدودیت نرخ ============
+    if (!checkRateLimit(clientIP)) {
+      return new Response(t('rateLimitExceeded', lang), { status: 429 });
+    }
+    
+    const isWebSocket = request.headers.get("Upgrade") === "websocket";
+    const paths = {
+      v2ray: `/${encodeURI(SUB_PATH)}/v2ray`,
+      clash: `/${encodeURI(SUB_PATH)}/clash`,
+      info: `/${encodeURI(SUB_PATH)}/info`,
+      sub: `/${encodeURI(SUB_PATH)}`,
+    };
+    
+    const isValidPath = Object.values(paths).includes(url.pathname);
+    
+    // ============ 伪装网页 ============
+    if (!isWebSocket && !isValidPath) {
+      if (FAKE_WEB) {
+        try {
+          const targetUrl = new URL(FAKE_WEB);
+          targetUrl.pathname = url.pathname;
+          targetUrl.search = url.search;
+          
+          const proxyReq = new Request(targetUrl.toString(), {
+            method: request.method,
+            headers: request.headers,
+            body: request.body,
+          });
+          
+          const response = await fetch(proxyReq);
+          return response;
+        } catch {
+          return new Response(t('notFound', lang), { status: 404 });
+        }
+      }
+      return new Response(t('notFound', lang), { status: 404 });
+    }
+    
+    // ============  تولید کانفیگ‌ها ============
+    if (!isWebSocket) {
+      const host = request.headers.get("Host");
+      const uuid = generateUUID(SUB_PATH);
+      
+      if (url.pathname === paths.v2ray) {
+        return generateV2RayConfig(host, uuid);
+      }
+      
+      if (url.pathname === paths.clash) {
+        return generateClashConfig(host, uuid);
+      }
+      
+      if (url.pathname === paths.info) {
+        return generateInfoPage(lang);
+      }
+      
+      if (url.pathname === paths.sub) {
+        const ua = request.headers.get("User-Agent")?.toLowerCase() || "";
+        if (ua.includes("v2ray") || ua.includes("nekoray")) {
+          return generateV2RayConfig(host, uuid);
+        } else if (ua.includes("clash")) {
+          return generateClashConfig(host, uuid);
+        } else {
+          return generateTipsPage(lang);
+        }
+      }
+    }
+    
+    // ============  WebSocket ============
+    if (isWebSocket) {
+      return handleWebSocket(request, lang);
+    }
+  }
+};
+
+// ============  مدیریت WebSocket ============
+async function handleWebSocket(request, lang) {
+  const [client, server] = Object.values(new WebSocketPair());
+  server.accept();
+  server.binaryType = "arraybuffer";
+  server.send(new Uint8Array([0, 0]));
+  
+  let tcpSocket;
+  let isFirstPacket = true;
+  let queue = Promise.resolve();
+  let writer;
+  
+  server.addEventListener("message", async (event) => {
+    queue = queue.then(async () => {
+      if (isFirstPacket) {
+        isFirstPacket = false;
+        await handleVLessHandshake(event.data, server);
+      } else {
+        await writer.write(event.data);
+      }
+    });
+  });
+  
+  async function handleVLessHandshake(data, ws) {
+    const bytes = new Uint8Array(data);
+    const uuid = generateUUID(SUB_PATH);
+    
+    if (!validateUUID(bytes.slice(1, 17), uuid)) {
+      ws.close(1008, "Invalid UUID");
+      return;
+    }
+    
+    const addrType = bytes[17];
+    let offset = 18;
+    let address = "";
+    let port = 0;
+    
+    if (addrType === 1) {
+      address = Array.from(bytes.slice(offset, offset + 4)).join(".");
+      offset += 4;
+    } else if (addrType === 2) {
+      const len = bytes[offset];
+      offset += 1;
+      address = new TextDecoder().decode(bytes.slice(offset, offset + len));
+      offset += len;
+    } else if (addrType === 3) {
+      const ipv6 = [];
+      for (let i = 0; i < 8; i++) {
+        ipv6.push(new DataView(bytes.buffer).getUint16(offset + i * 2).toString(16));
+      }
+      address = ipv6.join(":");
+      offset += 16;
+    } else {
+      ws.close(1008, "Invalid address type");
+      return;
+    }
+    
+    port = new DataView(bytes.buffer).getUint16(offset);
+    offset += 2;
+    
+    const initialData = data.slice(offset);
+    
+    let bestIP = await discoverBestIP(address);
+    let finalAddress = bestIP;
+    let finalPort = port;
+    
+    try {
+      tcpSocket = connect({ hostname: finalAddress, port: finalPort });
+      await tcpSocket.opened;
+    } catch {
+      const [proxyHost, proxyPort = port] = PROXY_IP.split(":");
+      tcpSocket = connect({ hostname: proxyHost, port: proxyPort });
+      await tcpSocket.opened;
+    }
+    
+    trackUsage(uuid, data.byteLength);
+    
+    writer = tcpSocket.writable.getWriter();
+    if (initialData.byteLength > 0) {
+      await writer.write(initialData);
+    }
+    
+    tcpSocket.readable.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          ws.send(chunk);
+          trackUsage(uuid, chunk.byteLength);
+        },
+      })
+    );
+  }
+  
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+// ============  تولید کانفیگ‌ها ============
+function generateV2RayConfig(host, uuid) {
+  const ip = getBestIP(host);
+  const config = `vless://${uuid}@${ip}:443?encryption=none&security=tls&sni=${host}&fp=chrome&type=ws&host=${host}#${host}`;
+  return new Response(config, {
+    headers: { "Content-Type": "text/plain;charset=utf-8" }
+  });
+}
+
+function generateClashConfig(host, uuid) {
+  const ip = getBestIP(host);
+  const config = `
+proxies:
+- name: ${host}
+  type: vless
+  server: ${ip}
+  port: 443
+  uuid: ${uuid}
+  udp: true
+  tls: true
+  sni: ${host}
+  network: ws
+  ws-opts:
+    headers:
+      Host: ${host}
+
+proxy-groups:
+- name: PROXY
+  type: select
+  proxies:
+    - ${host}
+
+rules:
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
+`;
+  return new Response(config, {
+    headers: { "Content-Type": "application/yaml;charset=utf-8" }
+  });
+}
+
+function generateTipsPage(lang) {
+  return new Response(`
+    <!DOCTYPE html>
+    <html dir="${getDirection(lang)}" lang="${lang}">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${t('subscription', lang)} - ${PANEL_NAME}</title>
+      <style>
+        body{display:flex;justify-content:center;align-items:center;height:100vh;font-size:24px;font-family:system-ui;margin:0;padding:20px;text-align:center}
+        .container{max-width:600px}
+        .panel-name{color:#4CAF50;font-weight:bold}
+        ${lang === 'fa' ? 'body{font-family:Tahoma,Arial,sans-serif}' : ''}
+      </style>
+      ${getLanguageSelector(lang)}
+    </head>
+    <body>
+      <div class="container">
+        <h1><span class="panel-name">${PANEL_NAME}</span></h1>
+        <strong>${t('importLink', lang)}</strong>
+        <br><br>
+        <small style="color:#666">${lang === 'fa' ? 'جهت تغییر زبان از منوی بالا استفاده کنید' : 'Use the menu above to change language'}</small>
+      </div>
+    </body>
+    </html>
+  `, {
+    headers: { "Content-Type": "text/html;charset=utf-8" }
+  });
+}
+
+function generateInfoPage(lang) {
+  let html = `
+    <!DOCTYPE html>
+    <html dir="${getDirection(lang)}" lang="${lang}">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${t('subscription', lang)} - ${PANEL_NAME}</title>
+      <style>
+        body{font-family:system-ui;padding:20px;max-width:800px;margin:auto;background:#f5f5f5}
+        ${lang === 'fa' ? 'body{font-family:Tahoma,Arial,sans-serif}' : ''}
+        .card{background:white;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:20px}
+        table{width:100%;border-collapse:collapse;overflow-x:auto;display:block}
+        th,td{padding:12px;text-align:${lang === 'fa' ? 'right' : 'left'};border-bottom:1px solid #ddd}
+        th{background:#4CAF50;color:white}
+        h1{color:#333}
+        .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;margin-bottom:20px}
+        .stat-box{background:white;padding:15px;border-radius:8px;text-align:center}
+        .panel-name{color:#4CAF50}
+      </style>
+      ${getLanguageSelector(lang)}
+    </head>
+    <body>
+      <div style="margin-top:60px">
+        <h1>📊 <span class="panel-name">${PANEL_NAME}</span> - ${t('subscription', lang)}</h1>
+  `;
+  
+  const totalTraffic = Array.from(userDB.values()).reduce((sum, u) => sum + u.usage, 0);
+  html += `
+    <div class="stats">
+      <div class="stat-box"><h3>👥 ${t('users', lang)}</h3><h2>${userDB.size}</h2></div>
+      <div class="stat-box"><h3>📊 ${t('totalTraffic', lang)}</h3><h2>${(totalTraffic / (1024**3)).toFixed(2)} GB</h2></div>
+    </div>
+    <div class="card">
+      <table>
+        <tr><th>${t('uuid', lang)}</th><th>${t('usage', lang)} (GB)</th><th>${t('limit', lang)} (GB)</th><th>${t('status', lang)}</th><th>${t('lastSeen', lang)}</th></tr>
+  `;
+  
+  if (userDB.size === 0) {
+    html += `<tr><td colspan="5" style="text-align:center">${t('noUsers', lang)}</td></tr>`;
+  } else {
+    for (const [uuid, data] of userDB) {
+      const usage = (data.usage / (1024**3)).toFixed(2);
+      const limit = (data.limit / (1024**3)).toFixed(2);
+      const status = data.enabled ? `✅ ${t('active', lang)}` : `❌ ${t('disabled', lang)}`;
+      const lastSeen = new Date(data.lastSeen).toLocaleString(lang === 'fa' ? 'fa-IR' : 'en-US');
+      html += `<tr><td>${uuid}</td><td>${usage}</td><td>${limit}</td><td>${status}</td><td>${lastSeen}</td></tr>`;
+    }
+  }
+  
+  html += `
+      </table>
+    </div>
+    <div style="text-align:center;color:#666;padding:10px;font-size:12px">
+      ${PANEL_NAME} v2.0
+    </div>
+    </div>
+    </body>
+    </html>
+  `;
+  
+  return new Response(html, {
+    headers: { "Content-Type": "text/html;charset=utf-8" }
+  });
+}
+
+// ============  پنل مدیریت ============
+async function handleAdmin(request, lang) {
+  const url = new URL(request.url);
+  const dir = getDirection(lang);
+  const isLoggedIn = checkSession(request);
+  
+  // ============  پردازش لاگین ============
+  if (request.method === "POST" && url.pathname === `${ADMIN_PATH}login`) {
+    const formData = await request.formData();
+    const username = formData.get("username");
+    const password = formData.get("password");
+    
+    if (username === ADMIN_USER && password === adminPassword) {
+      // ایجاد سشن معتبر
+      const sessionToken = btoa(`${ADMIN_USER}:${adminPassword}:${Date.now()}`);
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Location": ADMIN_PATH,
+          "Set-Cookie": `session=${sessionToken}; path=/; max-age=86400; HttpOnly; SameSite=Lax`,
+          "Set-Cookie": `lang=${lang}; path=/; max-age=31536000`
+        }
+      });
+    } else {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Location": `${ADMIN_PATH}?error=1`,
+          "Set-Cookie": `lang=${lang}; path=/; max-age=31536000`
+        }
+      });
+    }
+  }
+  
+  // ============  خروج ============
+  if (url.pathname === `${ADMIN_PATH}logout`) {
+    return new Response(null, {
+      status: 302,
+      headers: {
+        "Location": ADMIN_PATH,
+        "Set-Cookie": "session=; path=/; max-age=0; HttpOnly"
+      }
+    });
+  }
+  
+  // ============  تغییر رمز عبور ============
+  if (request.method === "POST" && url.pathname === `${ADMIN_PATH}change-password`) {
+    if (!isLoggedIn) {
+      return new Response(null, {
+        status: 302,
+        headers: { "Location": `${ADMIN_PATH}?error=1` }
+      });
+    }
+    
+    const formData = await request.formData();
+    const currentPass = formData.get("current_password");
+    const newPass = formData.get("new_password");
+    const confirmPass = formData.get("confirm_password");
+    
+    let message = '';
+    let type = 'error';
+    
+    if (currentPass !== adminPassword) {
+      message = t('wrongPassword', lang);
+    } else if (newPass.length < 6) {
+      message = t('passwordRequirements', lang);
+    } else if (newPass !== confirmPass) {
+      message = t('passwordMismatch', lang);
+    } else {
+      adminPassword = newPass;
+      message = t('passwordChanged', lang);
+      type = 'success';
+    }
+    
+    return new Response(null, {
+      status: 302,
+      headers: {
+        "Location": `${ADMIN_PATH}?message=${encodeURIComponent(message)}&type=${type}`,
+        "Set-Cookie": `lang=${lang}; path=/; max-age=31536000`
+      }
+    });
+  }
+  
+  // ============  صفحه لاگین ============
+  if (!isLoggedIn) {
+    return new Response(`
+      <!DOCTYPE html>
+      <html dir="${dir}" lang="${lang}">
+      <head>
+        <title>${t('login', lang)} - ${PANEL_NAME}</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          *{box-sizing:border-box}
+          body{display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;font-family:system-ui;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:20px}
+          ${lang === 'fa' ? 'body{font-family:Tahoma,Arial,sans-serif}' : ''}
+          .login-box{background:white;padding:40px;border-radius:10px;box-shadow:0 10px 25px rgba(0,0,0,0.2);width:100%;max-width:400px}
+          .login-box h1{text-align:center;color:#333;margin-bottom:30px}
+          .panel-name{color:#4CAF50}
+          .login-box input{width:100%;padding:12px;margin:10px 0;border:1px solid #ddd;border-radius:5px;box-sizing:border-box;font-size:14px}
+          .login-box button{width:100%;padding:12px;background:#4CAF50;color:white;border:none;border-radius:5px;cursor:pointer;font-size:16px;transition:background 0.3s}
+          .login-box button:hover{background:#45a049}
+          .error{color:#f44336;text-align:center;margin:10px 0;padding:10px;background:#ffebee;border-radius:5px}
+          .lang-select{text-align:center;margin-top:20px}
+          .info{text-align:center;color:#666;font-size:12px;margin-top:20px}
+        </style>
+        ${getLanguageSelector(lang)}
+      </head>
+      <body>
+        <div class="login-box">
+          <h1>🔐 <span class="panel-name">${PANEL_NAME}</span></h1>
+          <form method="POST" action="${ADMIN_PATH}login">
+            <input type="text" name="username" placeholder="${t('password', lang)}" value="${ADMIN_USER}" readonly style="background:#f5f5f5;cursor:not-allowed">
+            <input type="password" name="password" placeholder="${t('password', lang)}" required autofocus>
+            <button type="submit">${t('login', lang)}</button>
+          </form>
+          ${url.searchParams.get('error') ? `<div class="error">❌ ${t('wrongPassword', lang)}</div>` : ''}
+          <div class="info">${PANEL_NAME} v2.0</div>
+        </div>
+      </body>
+      </html>
+    `, { 
+      headers: { 
+        "Content-Type": "text/html;charset=utf-8",
+        "Set-Cookie": `lang=${lang}; path=/; max-age=31536000`
+      }
+    });
+  }
+  
+  // ============  پردازش اکشن‌های POST ============
+  if (request.method === "POST") {
+    const formData = await request.formData();
+    const action = url.pathname;
+    let message = '';
+    let type = 'success';
+    
+    try {
+      if (action === ADMIN_PATH || action === `${ADMIN_PATH}`) {
+        const uuid = formData.get("uuid") || generateUUID(SUB_PATH + Date.now());
+        const limit = parseFloat(formData.get("limit")) * 1024**3;
+        if (!userDB.has(uuid)) {
+          userDB.set(uuid, { limit, usage: 0, lastSeen: Date.now(), enabled: true });
+          message = t('userAdded', lang);
+        } else {
+          message = lang === 'fa' ? 'کاربر از قبل وجود دارد' : 'User already exists';
+          type = 'error';
+        }
+      }
+      
+      if (action === `${ADMIN_PATH}toggle`) {
+        const uuid = formData.get("uuid");
+        const user = userDB.get(uuid);
+        if (user) {
+          user.enabled = !user.enabled;
+          userDB.set(uuid, user);
+          message = t('userToggled', lang);
+        }
+      }
+      
+      if (action === `${ADMIN_PATH}delete`) {
+        const uuid = formData.get("uuid");
+        userDB.delete(uuid);
+        message = t('userDeleted', lang);
+      }
+      
+      if (action === `${ADMIN_PATH}discover`) {
+        const host = formData.get("host");
+        await discoverBestIP(host);
+        message = t('ipDiscovered', lang);
+      }
+    } catch (error) {
+      message = `${t('error', lang)}: ${error.message}`;
+      type = 'error';
+    }
+    
+    return new Response(null, { 
+      status: 302, 
+      headers: { 
+        "Location": `${ADMIN_PATH}?message=${encodeURIComponent(message)}&type=${type}`,
+        "Set-Cookie": `lang=${lang}; path=/; max-age=31536000`
+      }
+    });
+  }
+  
+  // ============  داشبورد ============
+  const message = url.searchParams.get('message');
+  const messageType = url.searchParams.get('type') || 'success';
+  
+  let html = `
+  <!DOCTYPE html>
+  <html dir="${dir}" lang="${lang}">
+  <head>
+    <title>${t('title', lang)}</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+      *{box-sizing:border-box}
+      body{font-family:system-ui;padding:20px;max-width:1200px;margin:auto;background:#f5f5f5}
+      ${lang === 'fa' ? 'body{font-family:Tahoma,Arial,sans-serif}' : ''}
+      .header{background:linear-gradient(135deg,#4CAF50,#45a049);color:white;padding:20px;border-radius:8px;margin-bottom:20px}
+      .header h1{margin:0}
+      .header a{color:white;text-decoration:none;margin-right:15px}
+      .header a:hover{text-decoration:underline}
+      .card{background:white;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:20px}
+      table{width:100%;border-collapse:collapse;overflow-x:auto;display:block}
+      th,td{padding:12px;text-align:${dir === 'rtl' ? 'right' : 'left'};border-bottom:1px solid #ddd}
+      th{background:#4CAF50;color:white}
+      button{padding:8px 16px;border:none;border-radius:4px;cursor:pointer;margin:2px}
+      .add{background:#4CAF50;color:white}
+      .delete{background:#f44336;color:white}
+      .status{background:#2196F3;color:white}
+      input,select{padding:8px;margin:5px;border:1px solid #ddd;border-radius:4px;width:auto}
+      .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:20px;margin-bottom:20px}
+      .stat-box{background:white;padding:15px;border-radius:8px;text-align:center;box-shadow:0 2px 4px rgba(0,0,0,0.1)}
+      .form-group{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+      h1,h2,h3{color:#333}
+      .panel-name{color:#4CAF50}
+      .nav{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}
+      .nav a{background:white;padding:10px 20px;border-radius:5px;text-decoration:none;color:#333;box-shadow:0 2px 4px rgba(0,0,0,0.1)}
+      .nav a:hover{background:#f0f0f0}
+      .message{padding:15px;border-radius:5px;margin-bottom:20px}
+      .message.success{background:#d4edda;color:#155724;border:1px solid #c3e6cb}
+      .message.error{background:#f8d7da;color:#721c24;border:1px solid #f5c6cb}
+      @media (max-width:768px){table{font-size:12px}th,td{padding:8px}}
+      .tab{display:none}
+      .tab.active{display:block}
+      .tab-buttons{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+      .tab-buttons button{padding:10px 20px;background:#e0e0e0;border:none;border-radius:5px;cursor:pointer;transition:background 0.3s}
+      .tab-buttons button.active{background:#4CAF50;color:white}
+      .tab-buttons button:hover{background:#d0d0d0}
+      .tab-buttons button.active:hover{background:#45a049}
+    </style>
+    ${getLanguageSelector(lang)}
+  </head>
+  <body>
+    <div class="header">
+      <h1>⚙️ <span class="panel-name">${PANEL_NAME}</span> - ${t('title', lang)}</h1>
+      <div style="margin-top:10px">
+        <a href="${ADMIN_PATH}">🏠 ${t('dashboard', lang)}</a>
+        <a href="${ADMIN_PATH}logout">🚪 ${t('logout', lang)}</a>
+      </div>
+    </div>
+  `;
+  
+  // نمایش پیام
+  if (message) {
+    html += `<div class="message ${messageType}">${message}</div>`;
+  }
+  
+  // تب‌ها
+  html += `
+    <div class="tab-buttons">
+      <button class="active" onclick="showTab('dashboard')">📊 ${t('dashboard', lang)}</button>
+      <button onclick="showTab('users')">👥 ${t('users', lang)}</button>
+      <button onclick="showTab('settings')">⚙️ ${t('settings', lang)}</button>
+    </div>
+  `;
+  
+  // ============  تب داشبورد ============
+  const totalTraffic = Array.from(userDB.values()).reduce((sum, u) => sum + u.usage, 0);
+  html += `
+    <div id="tab-dashboard" class="tab active">
+      <div class="stats">
+        <div class="stat-box"><h3>👥 ${t('users', lang)}</h3><h2>${userDB.size}</h2></div>
+        <div class="stat-box"><h3>🌐 ${t('ipCache', lang)}</h3><h2>${ipCache.size}</h2></div>
+        <div class="stat-box"><h3>⚡ ${t('rateLimited', lang)}</h3><h2>${rateLimit.size}</h2></div>
+        <div class="stat-box"><h3>📊 ${t('totalTraffic', lang)}</h3><h2>${(totalTraffic / (1024**3)).toFixed(2)} GB</h2></div>
+      </div>
+      
+      <div class="card">
+        <h2>🔄 ${t('forceDiscover', lang)}</h2>
+        <form action="${ADMIN_PATH}discover" method="POST" class="form-group">
+          <input type="text" name="host" placeholder="${t('hostname', lang)}" value="cloudflare.com" />
+          <button type="submit" class="status">${t('discover', lang)}</button>
+        </form>
+      </div>
+      
+      <div class="card">
+        <h2>ℹ️ ${t('settings', lang)}</h2>
+        <p><strong>${t('panelName', lang)}:</strong> ${PANEL_NAME}</p>
+        <p><strong>${t('status', lang)}:</strong> ✅ ${t('ok', lang)}</p>
+        <p><strong>${t('users', lang)}:</strong> ${userDB.size}</p>
+        <p><strong>${t('ipCache', lang)}:</strong> ${ipCache.size}</p>
+        <p><strong>Admin Path:</strong> ${ADMIN_PATH}</p>
+      </div>
+    </div>
+  `;
+  
+  // ============  تب کاربران ============
+  html += `
+    <div id="tab-users" class="tab">
+      <div class="card">
+        <h2>➕ ${t('addUser', lang)}</h2>
+        <form action="${ADMIN_PATH}" method="POST" class="form-group">
+          <input type="text" name="uuid" placeholder="${t('uuid', lang)} (${lang === 'fa' ? 'اختیاری' : 'optional'})" />
+          <input type="number" name="limit" placeholder="${t('limit', lang)}" value="100" />
+          <button type="submit" class="add">${t('add', lang)}</button>
+        </form>
+      </div>
+      
+      <div class="card">
+        <h2>📋 ${t('users', lang)}</h2>
+        <table>
+          <thead><tr>
+            <th>${t('uuid', lang)}</th>
+            <th>${t('usage', lang)} (GB)</th>
+            <th>${t('limit', lang)} (GB)</th>
+            <th>${t('status', lang)}</th>
+            <th>${t('lastSeen', lang)}</th>
+            <th>${t('actions', lang)}</th>
+          </tr></thead>
+          <tbody>
+  `;
+  
+  if (userDB.size === 0) {
+    html += `<tr><td colspan="6" style="text-align:center">${t('noUsers', lang)}</td></tr>`;
+  } else {
+    for (const [uuid, data] of userDB) {
+      const usage = (data.usage / (1024**3)).toFixed(2);
+      const limit = (data.limit / (1024**3)).toFixed(2);
+      html += `
+        <tr>
+          <td style="font-size:12px">${uuid}</td>
+          <td>${usage}</td>
+          <td>${limit}</td>
+          <td>${data.enabled ? `✅ ${t('active', lang)}` : `❌ ${t('disabled', lang)}`}</td>
+          <td>${new Date(data.lastSeen).toLocaleString(lang === 'fa' ? 'fa-IR' : 'en-US')}</td>
+          <td>
+            <form style="display:inline" action="${ADMIN_PATH}toggle" method="POST">
+              <input type="hidden" name="uuid" value="${uuid}" />
+              <button type="submit" class="status">${t('toggle', lang)}</button>
+            </form>
+            <form style="display:inline" action="${ADMIN_PATH}delete" method="POST" onsubmit="return confirm('${t('confirmDelete', lang)}')">
+              <input type="hidden" name="uuid" value="${uuid}" />
+              <button type="submit" class="delete">${t('delete', lang)}</button>
+            </form>
+          </td>
+        </tr>
+      `;
+    }
+  }
+  
+  html += `
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  
+  // ============  تب تنظیمات ============
+  html += `
+    <div id="tab-settings" class="tab">
+      <div class="card">
+        <h2>🔑 ${t('changePassword', lang)}</h2>
+        <form action="${ADMIN_PATH}change-password" method="POST" onsubmit="return validatePassword()">
+          <div class="form-group" style="flex-direction:column;align-items:stretch">
+            <input type="password" name="current_password" placeholder="${t('currentPassword', lang)}" required />
+            <input type="password" name="new_password" id="new_password" placeholder="${t('newPassword', lang)}" required minlength="6" />
+            <input type="password" name="confirm_password" id="confirm_password" placeholder="${t('confirmPassword', lang)}" required />
+            <small style="color:#666">${t('passwordRequirements', lang)}</small>
+            <button type="submit" class="status">${t('change', lang)}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  
+  // ============  جاوااسکریپت ============
+  html += `
+    <script>
+      function showTab(tabId) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-buttons button').forEach(b => b.classList.remove('active'));
+        document.getElementById('tab-' + tabId).classList.add('active');
+        document.querySelector('.tab-buttons button[onclick*="' + tabId + '"]').classList.add('active');
+      }
+      
+      function validatePassword() {
+        const newPass = document.getElementById('new_password').value;
+        const confirmPass = document.getElementById('confirm_password').value;
+        if (newPass !== confirmPass) {
+          alert('${t('passwordMismatch', lang)}');
+          return false;
+        }
+        if (newPass.length < 6) {
+          alert('${t('passwordRequirements', lang)}');
+          return false;
+        }
+        return true;
+      }
+      
+      document.querySelector('select[name="lang"]')?.addEventListener('change', function() {
+        this.closest('form').submit();
+      });
+      
+      // حذف پیام بعد از ۵ ثانیه
+      const urlParams = new URLSearchParams(window.location.search);
+      const message = urlParams.get('message');
+      if (message) {
+        setTimeout(() => {
+          const msgDiv = document.querySelector('.message');
+          if (msgDiv) msgDiv.style.display = 'none';
+        }, 5000);
+      }
+    </script>
+    
+    <div style="text-align:center;color:#666;padding:20px;font-size:12px">
+      ${PANEL_NAME} v2.0 - ${lang === 'fa' ? 'پنل مدیریت دو زبانه' : 'Bilingual Admin Panel'}
+    </div>
+  </body>
+  </html>
+  `;
+  
+  return new Response(html, { 
+    headers: { 
+      "Content-Type": "text/html;charset=utf-8",
+      "Set-Cookie": `lang=${lang}; path=/; max-age=31536000`
+    } 
+  });
+}
+
+// ============  API ============
+async function handleAPI(request) {
+  const url = new URL(request.url);
+  const endpoint = url.pathname.slice(5);
+  
+  if (endpoint === "users") {
+    return new Response(JSON.stringify(Object.fromEntries(userDB)), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  
+  if (endpoint === "ipcache") {
+    return new Response(JSON.stringify(Object.fromEntries(ipCache)), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  
+  if (endpoint === "stats") {
+    const totalTraffic = Array.from(userDB.values()).reduce((sum, u) => sum + u.usage, 0);
+    return new Response(JSON.stringify({
+      panel: PANEL_NAME,
+      totalUsers: userDB.size,
+      totalTraffic: totalTraffic,
+      ipCacheSize: ipCache.size,
+      rateLimitSize: rateLimit.size,
+      adminPath: ADMIN_PATH
+    }), { headers: { "Content-Type": "application/json" } });
+  }
+  
+  return new Response("Not Found", { status: 404 });
+}
