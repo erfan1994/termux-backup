@@ -1,0 +1,1017 @@
+/**
+ * AJB-VIP — Cloudflare Worker
+ * Version: 4.0.0
+ *
+ * Required KV Binding:
+ *   KV
+ *
+ * Optional Secret:
+ *   USAGE_REPORT_SECRET
+ *
+ * First run:
+ *   Open /panel
+ *   Create the administrator account from the setup screen.
+ */
+
+const APP = {
+  NAME: "AJB-VIP",
+  VERSION: "4.0.0",
+
+  SESSION_TTL: 86400,
+  LOGIN_TTL: 900,
+  LOGIN_MAX: 8,
+
+  DEFAULT_QUOTA_GB: 10,
+  DEFAULT_EXPIRY_DAYS: 30,
+  DEFAULT_DEVICES: 1,
+
+  MAX_QUOTA_GB: 10000,
+  MAX_EXPIRY_DAYS: 3650,
+  MAX_DEVICES: 100,
+
+  PASSWORD_MIN: 10,
+
+  K_ADMIN: "system:admin",
+  K_SETTINGS: "system:settings",
+  P_USER: "user:",
+  P_USERNAME: "idx:username:",
+  P_SUB: "idx:sub:",
+  P_SESSION: "session:",
+  P_LOGIN: "login:",
+  P_AUDIT: "audit:"
+};
+
+const encoder = new TextEncoder();
+
+/* =========================================================
+   BASIC HELPERS
+========================================================= */
+
+function json(data, status = 200, extra = {}) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      ...extra
+    }
+  });
+}
+
+function html(body, status = 200) {
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer"
+    }
+  });
+}
+
+function bad(message, status = 400) {
+  return json({ ok: false, error: message }, status);
+}
+
+function randomBytes(length = 32) {
+  const a = new Uint8Array(length);
+  crypto.getRandomValues(a);
+  return a;
+}
+
+function hex(bytes) {
+  return [...bytes]
+    .map(x => x.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function randomToken(bytes = 32) {
+  return hex(randomBytes(bytes));
+}
+
+function now() {
+  return Date.now();
+}
+
+function gbToBytes(gb) {
+  return Math.floor(Number(gb) * 1024 * 1024 * 1024);
+}
+
+function bytesToGB(bytes) {
+  return Number(bytes / (1024 ** 3)).toFixed(2);
+}
+
+function safeInt(value, min, max) {
+  const n = Number(value);
+  if (!Number.isInteger(n)) return null;
+  if (n < min || n > max) return null;
+  return n;
+}
+
+function safeUsername(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, "")
+    .slice(0, 64);
+}
+
+function escapeHTML(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function sha256(value) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(value)
+  );
+  return hex(new Uint8Array(digest));
+}
+
+/* =========================================================
+   PASSWORD HASHING
+========================================================= */
+
+const PBKDF2_ITERATIONS = 120000;
+
+async function hashPassword(password, saltHex = null) {
+  const salt = saltHex
+    ? Uint8Array.from(
+        saltHex.match(/.{1,2}/g).map(x => parseInt(x, 16))
+      )
+    : randomBytes(16);
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256"
+    },
+    key,
+    256
+  );
+
+  return {
+    salt: hex(salt),
+    hash: hex(new Uint8Array(bits))
+  };
+}
+
+async function verifyPassword(password, record) {
+  const result = await hashPassword(password, record.salt);
+  return constantTimeEqual(result.hash, record.hash);
+}
+
+function constantTimeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (a.length !== b.length) return false;
+
+  let result = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+
+  return result === 0;
+}
+
+/* =========================================================
+   COOKIE
+========================================================= */
+
+function getCookie(request, name) {
+  const header = request.headers.get("Cookie") || "";
+
+  for (const part of header.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+
+    if (key === name) {
+      return decodeURIComponent(rest.join("="));
+    }
+  }
+
+  return null;
+}
+
+function sessionCookie(token) {
+  return [
+    `ajb_session=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Strict",
+    `Max-Age=${APP.SESSION_TTL}`
+  ].join("; ");
+}
+
+function clearSessionCookie() {
+  return [
+    "ajb_session=",
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    "SameSite=Strict",
+    "Max-Age=0"
+  ].join("; ");
+}
+
+/* =========================================================
+   DATABASE
+========================================================= */
+
+class DB {
+  constructor(env) {
+    if (!env.KV) {
+      throw new Error("KV binding named KV is missing");
+    }
+
+    this.kv = env.KV;
+  }
+
+  async get(key) {
+    return await this.kv.get(key, "json");
+  }
+
+  async put(key, value, expirationTtl = null) {
+    const options = {};
+
+    if (expirationTtl) {
+      options.expirationTtl = expirationTtl;
+    }
+
+    await this.kv.put(
+      key,
+      JSON.stringify(value),
+      options
+    );
+  }
+
+  async del(key) {
+    await this.kv.delete(key);
+  }
+
+  async hasAdmin() {
+    return !!(await this.get(APP.K_ADMIN));
+  }
+
+  async getAdmin() {
+    return await this.get(APP.K_ADMIN);
+  }
+
+  async saveAdmin(admin) {
+    await this.put(APP.K_ADMIN, admin);
+  }
+
+  async getUser(id) {
+    return await this.get(APP.P_USER + id);
+  }
+
+  async saveUser(user) {
+    await this.put(APP.P_USER + user.id, user);
+  }
+
+  async deleteUser(id) {
+    await this.del(APP.P_USER + id);
+  }
+
+  async usernameIndex(username) {
+    return await this.get(APP.P_USERNAME + username);
+  }
+
+  async subscriptionIndex(tokenHash) {
+    return await this.get(APP.P_SUB + tokenHash);
+  }
+
+  async listUsers() {
+    const result = [];
+    let cursor;
+
+    do {
+      const page = await this.kv.list({
+        prefix: APP.P_USER,
+        cursor,
+        limit: 1000
+      });
+
+      for (const key of page.keys) {
+        const user = await this.get(key.name);
+
+        if (user) result.push(user);
+      }
+
+      cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor);
+
+    return result;
+  }
+}
+
+/* =========================================================
+   USER STATUS
+========================================================= */
+
+function getUserStatus(user) {
+  if (!user.enabled) return "disabled";
+
+  if (Date.now() >= user.expiresAt) {
+    return "expired";
+  }
+
+  if (user.usedBytes >= user.quotaBytes) {
+    return "exhausted";
+  }
+
+  return "active";
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    quotaGB: Number((user.quotaBytes / (1024 ** 3)).toFixed(2)),
+    usedGB: Number((user.usedBytes / (1024 ** 3)).toFixed(2)),
+    remainingGB: Number(
+      Math.max(
+        0,
+        (user.quotaBytes - user.usedBytes) / (1024 ** 3)
+      ).toFixed(2)
+    ),
+    expiresAt: user.expiresAt,
+    maxDevices: user.maxDevices,
+    activeDevices: user.activeDevices || 0,
+    enabled: user.enabled,
+    status: getUserStatus(user),
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
+}
+
+/* =========================================================
+   AUTH
+========================================================= */
+
+async function getSession(request, db) {
+  const token = getCookie(request, "ajb_session");
+
+  if (!token) return null;
+
+  const tokenHash = await sha256(token);
+  const session = await db.get(APP.P_SESSION + tokenHash);
+
+  if (!session) return null;
+
+  if (Date.now() >= session.expiresAt) {
+    await db.del(APP.P_SESSION + tokenHash);
+    return null;
+  }
+
+  return {
+    ...session,
+    token,
+    tokenHash
+  };
+}
+
+async function requireAdmin(request, db) {
+  const session = await getSession(request, db);
+
+  if (!session) {
+    return null;
+  }
+
+  return session;
+}
+
+async function createSession(db) {
+  const token = randomToken(48);
+  const tokenHash = await sha256(token);
+
+  const expiresAt = Date.now() + APP.SESSION_TTL * 1000;
+
+  await db.put(
+    APP.P_SESSION + tokenHash,
+    {
+      expiresAt
+    },
+    APP.SESSION_TTL
+  );
+
+  return {
+    token,
+    expiresAt
+  };
+}
+
+async function csrfToken(session) {
+  return await sha256(
+    `${session.token}:${session.expiresAt}`
+  );
+}
+
+async function checkCSRF(request, session) {
+  const token = request.headers.get("X-CSRF-Token");
+
+  if (!token) return false;
+
+  const expected = await csrfToken(session);
+
+  return constantTimeEqual(token, expected);
+}
+
+/* =========================================================
+   LOGIN RATE LIMIT
+========================================================= */
+
+async function loginAllowed(request, db, username) {
+  const ip =
+    request.headers.get("CF-Connecting-IP") ||
+    "unknown";
+
+  const key =
+    APP.P_LOGIN +
+    (await sha256(ip + ":" + username));
+
+  const record = (await db.get(key)) || {
+    count: 0,
+    expiresAt: Date.now() + APP.LOGIN_TTL * 1000
+  };
+
+  if (Date.now() >= record.expiresAt) {
+    return true;
+  }
+
+  return record.count < APP.LOGIN_MAX;
+}
+
+async function registerLoginFailure(request, db, username) {
+  const ip =
+    request.headers.get("CF-Connecting-IP") ||
+    "unknown";
+
+  const key =
+    APP.P_LOGIN +
+    (await sha256(ip + ":" + username));
+
+  const record = (await db.get(key)) || {
+    count: 0,
+    expiresAt: Date.now() + APP.LOGIN_TTL * 1000
+  };
+
+  record.count++;
+
+  const ttl = Math.max(
+    1,
+    Math.ceil((record.expiresAt - Date.now()) / 1000)
+  );
+
+  await db.put(key, record, ttl);
+}
+
+async function clearLoginFailures(request, db, username) {
+  const ip =
+    request.headers.get("CF-Connecting-IP") ||
+    "unknown";
+
+  await db.del(
+    APP.P_LOGIN +
+    (await sha256(ip + ":" + username))
+  );
+}
+
+/* =========================================================
+   SETUP
+========================================================= */
+
+async function handleSetup(request, db) {
+  if (await db.hasAdmin()) {
+    return bad("Administrator already exists", 409);
+  }
+
+  if (request.method !== "POST") {
+    return json({
+      ok: true,
+      setupRequired: true
+    });
+  }
+
+  const body = await request.json().catch(() => null);
+
+  if (!body) return bad("Invalid JSON");
+
+  const username = safeUsername(body.username);
+  const password = String(body.password || "");
+
+  if (!username || username.length < 3) {
+    return bad("Invalid username");
+  }
+
+  if (password.length < APP.PASSWORD_MIN) {
+    return bad(
+      `Password must contain at least ${APP.PASSWORD_MIN} characters`
+    );
+  }
+
+  const passwordData = await hashPassword(password);
+
+  await db.saveAdmin({
+    username,
+    ...passwordData,
+    createdAt: Date.now()
+  });
+
+  return json({
+    ok: true,
+    message: "Administrator created"
+  });
+}
+
+/* =========================================================
+   LOGIN
+========================================================= */
+
+async function handleLogin(request, db) {
+  if (request.method !== "POST") {
+    return bad("Method not allowed", 405);
+  }
+
+  const body = await request.json().catch(() => null);
+
+  if (!body) return bad("Invalid JSON");
+
+  const username = safeUsername(body.username);
+  const password = String(body.password || "");
+
+  if (!username || !password) {
+    return bad("Username and password are required");
+  }
+
+  if (!(await loginAllowed(request, db, username))) {
+    return bad(
+      "Too many login attempts. Try again later.",
+      429
+    );
+  }
+
+  const admin = await db.getAdmin();
+
+  if (!admin) {
+    return bad("Administrator setup is required", 503);
+  }
+
+  const valid =
+    constantTimeEqual(username, admin.username) &&
+    await verifyPassword(password, admin);
+
+  if (!valid) {
+    await registerLoginFailure(
+      request,
+      db,
+      username
+    );
+
+    return bad("Invalid credentials", 401);
+  }
+
+  await clearLoginFailures(
+    request,
+    db,
+    username
+  );
+
+  const session = await createSession(db);
+
+  return json(
+    {
+      ok: true,
+      csrf: await csrfToken({
+        token: session.token,
+        expiresAt: session.expiresAt
+      })
+    },
+    200,
+    {
+      "Set-Cookie": sessionCookie(session.token)
+    }
+  );
+}
+
+async function handleLogout(request, db) {
+  const session = await getSession(request, db);
+
+  if (session) {
+    await db.del(
+      APP.P_SESSION + session.tokenHash
+    );
+  }
+
+  return json(
+    { ok: true },
+    200,
+    {
+      "Set-Cookie": clearSessionCookie()
+    }
+  );
+}
+
+/* =========================================================
+   CREATE USER
+========================================================= */
+
+async function createUser(request, db) {
+  const body = await request.json().catch(() => null);
+
+  if (!body) return bad("Invalid JSON");
+
+  const username = safeUsername(body.username);
+  const password = String(body.password || "");
+
+  const quotaGB =
+    body.quotaGB === undefined
+      ? APP.DEFAULT_QUOTA_GB
+      : Number(body.quotaGB);
+
+  const expiryDays =
+    body.expiryDays === undefined
+      ? APP.DEFAULT_EXPIRY_DAYS
+      : Number(body.expiryDays);
+
+  const maxDevices =
+    body.maxDevices === undefined
+      ? APP.DEFAULT_DEVICES
+      : Number(body.maxDevices);
+
+  if (username.length < 3) {
+    return bad("Username must contain at least 3 valid characters");
+  }
+
+  if (password.length < APP.PASSWORD_MIN) {
+    return bad(
+      `Password must contain at least ${APP.PASSWORD_MIN} characters`
+    );
+  }
+
+  if (
+    !Number.isFinite(quotaGB) ||
+    quotaGB <= 0 ||
+    quotaGB > APP.MAX_QUOTA_GB
+  ) {
+    return bad("Invalid quota");
+  }
+
+  if (
+    !Number.isInteger(expiryDays) ||
+    expiryDays < 1 ||
+    expiryDays > APP.MAX_EXPIRY_DAYS
+  ) {
+    return bad("Invalid expiry");
+  }
+
+  if (
+    !Number.isInteger(maxDevices) ||
+    maxDevices < 1 ||
+    maxDevices > APP.MAX_DEVICES
+  ) {
+    return bad("Invalid device limit");
+  }
+
+  const existing =
+    await db.usernameIndex(username);
+
+  if (existing) {
+    return bad("Username already exists", 409);
+  }
+
+  const users = await db.listUsers();
+
+  if (users.length >= 1000) {
+    return bad("Maximum number of users reached", 409);
+  }
+
+  const id = crypto.randomUUID();
+  const subscriptionToken = randomToken(32);
+  const subscriptionHash =
+    await sha256(subscriptionToken);
+
+  const passwordData =
+    await hashPassword(password);
+
+  const timestamp = Date.now();
+
+  const user = {
+    id,
+    username,
+
+    ...passwordData,
+
+    quotaBytes: gbToBytes(quotaGB),
+    usedBytes: 0,
+
+    expiresAt:
+      timestamp +
+      expiryDays * 86400 * 1000,
+
+    maxDevices,
+    activeDevices: 0,
+
+    enabled: true,
+
+    subscriptionToken,
+    subscriptionHash,
+
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  await db.saveUser(user);
+
+  await db.put(
+    APP.P_USERNAME + username,
+    id
+  );
+
+  await db.put(
+    APP.P_SUB + subscriptionHash,
+    id
+  );
+
+  return json({
+    ok: true,
+    user: publicUser(user),
+    subscriptionToken
+  });
+}
+
+/* =========================================================
+   UPDATE USER
+========================================================= */
+
+async function updateUser(request, db) {
+  const body = await request.json().catch(() => null);
+
+  if (!body || !body.id) {
+    return bad("User ID is required");
+  }
+
+  const user = await db.getUser(body.id);
+
+  if (!user) {
+    return bad("User not found", 404);
+  }
+
+  const updated = { ...user };
+
+  if (body.quotaGB !== undefined) {
+    const quotaGB = Number(body.quotaGB);
+
+    if (
+      !Number.isFinite(quotaGB) ||
+      quotaGB <= 0 ||
+      quotaGB > APP.MAX_QUOTA_GB
+    ) {
+      return bad("Invalid quota");
+    }
+
+    updated.quotaBytes =
+      gbToBytes(quotaGB);
+  }
+
+  if (body.expiryDays !== undefined) {
+    const days = Number(body.expiryDays);
+
+    if (
+      !Number.isInteger(days) ||
+      days < 1 ||
+      days > APP.MAX_EXPIRY_DAYS
+    ) {
+      return bad("Invalid expiry");
+    }
+
+    updated.expiresAt =
+      Date.now() +
+      days * 86400 * 1000;
+  }
+
+  if (body.maxDevices !== undefined) {
+    const devices =
+      Number(body.maxDevices);
+
+    if (
+      !Number.isInteger(devices) ||
+      devices < 1 ||
+      devices > APP.MAX_DEVICES
+    ) {
+      return bad("Invalid device limit");
+    }
+
+    updated.maxDevices = devices;
+
+    if (updated.activeDevices > devices) {
+      updated.activeDevices = devices;
+    }
+  }
+
+  if (body.enabled !== undefined) {
+    updated.enabled = !!body.enabled;
+  }
+
+  if (
+    body.password !== undefined &&
+    String(body.password).length
+  ) {
+    const password =
+      String(body.password);
+
+    if (password.length < APP.PASSWORD_MIN) {
+      return bad(
+        `Password must contain at least ${APP.PASSWORD_MIN} characters`
+      );
+    }
+
+    const passwordData =
+      await hashPassword(password);
+
+    updated.salt = passwordData.salt;
+    updated.hash = passwordData.hash;
+  }
+
+  updated.updatedAt = Date.now();
+
+  await db.saveUser(updated);
+
+  return json({
+    ok: true,
+    user: publicUser(updated)
+  });
+}
+
+/* =========================================================
+   DELETE USER
+========================================================= */
+
+async function deleteUser(request, db) {
+  const body = await request.json().catch(() => null);
+
+  if (!body?.id) {
+    return bad("User ID is required");
+  }
+
+  const user = await db.getUser(body.id);
+
+  if (!user) {
+    return bad("User not found", 404);
+  }
+
+  await db.deleteUser(user.id);
+
+  await db.del(
+    APP.P_USERNAME + user.username
+  );
+
+  if (user.subscriptionHash) {
+    await db.del(
+      APP.P_SUB + user.subscriptionHash
+    );
+  }
+
+  return json({
+    ok: true
+  });
+}
+
+/* =========================================================
+   RESET USAGE
+========================================================= */
+
+async function resetUsage(request, db) {
+  const body = await request.json().catch(() => null);
+
+  if (!body?.id) {
+    return bad("User ID is required");
+  }
+
+  const user = await db.getUser(body.id);
+
+  if (!user) {
+    return bad("User not found", 404);
+  }
+
+  user.usedBytes = 0;
+  user.updatedAt = Date.now();
+
+  await db.saveUser(user);
+
+  return json({
+    ok: true,
+    user: publicUser(user)
+  });
+}
+
+/* =========================================================
+   DEVICE CHECK
+========================================================= */
+
+async function deviceCheck(request, db) {
+  const body = await request.json().catch(() => null);
+
+  if (!body) return bad("Invalid JSON");
+
+  let user = null;
+
+  if (body.subscriptionToken) {
+    const tokenHash =
+      await sha256(
+        String(body.subscriptionToken)
+      );
+
+    const id =
+      await db.subscriptionIndex(tokenHash);
+
+    if (id) {
+      user = await db.getUser(id);
+    }
+  }
+
+  if (!user && body.userId) {
+    user = await db.getUser(
+      String(body.userId)
+    );
+  }
+
+  if (!user) {
+    return json({
+      ok: false,
+      allowed: false,
+      reason: "not_found"
+    });
+  }
+
+  const status = getUserStatus(user);
+
+  if (status !== "active") {
+    return json({
+      ok: true,
+      allowed: false,
+      reason: status,
+      status
+    });
+  }
+
+  const active =
+    Number(user.activeDevices || 0);
+
+  const allowed =
+    active < user.maxDevices;
+
+  return json({
+    ok: true,
+    allowed,
+    status,
+    activeDevices: active,
+    maxDevices: user.maxDevices
+  });
+}
+
+/* =========================================================
+   USAGE REPORT
+========================================================= */
+
+async function usageReport(request, env, db) {
+  const secret =
+    env.USAGE_REPORT_SECRET;
+
+  if (!secret) {
+    return bad(
+      "USAGE_REPORT_SECRET is not configured",
+      503
+    );
+  }
+
+  const supplied =
+    request.headers.get(
+      "X-Usage-Secret"
+    );
+
+  if (
+    !supplied ||
+    !constantTimeEqual(
+      supplied,
+      secret
+    )
+  ) {
+    return bad("Un
